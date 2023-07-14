@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    # Sequence of patterns matched against refs/heads
+    branches:    
+      # Push events on main branch
+      - main
+      - master
+    # Sequence of patterns matched against refs/tags
+    tags: '*'
+
+jobs:
+  test:
+    name: ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1.8'
+        os:
+          - ubuntu-latest
+        arch:
+          - x64
+        exclude:
+          - os: macOS-latest
+            arch: x86
+        python-version: ["3.8"]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: 'true'
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: conda-incubator/setup-miniconda@v2
+        with:
+          auto-update-conda: true
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        shell: bash -el {0}
+        run: |
+          conda create -n faiss python=3.8
+          conda activate faiss
+          conda install -c pytorch faiss-cpu==1.7.0
+          conda install matplotlib
+          pip install h5py
+      - name: Run benchmark
+        shell: bash -el {0}
+        run: |
+          conda activate faiss
+          python3 search/search.py
+          python3 eval/eval.py
+          python3 eval/plot.py res.csv
+      - uses: actions/upload-artifact@v3
+        with:
+          name: Results on 100k
+          path: | 
+            res.csv
+            result_100K.png
