@@ -9,7 +9,7 @@ starting points. Multiple search methods are tested, utilizing these well distri
 starting points. 
 
 This code heavily relies on the highly-optimized implementation of the Hierarchical Navigable Small World (HNSW) by
-[yurymalkov](https://github.com/nmslib/hnswlib/commits?author=yurymalkov). 
+[yurymalkov](https://github.com/nmslib/hnswlib). 
 
 ~~~
     @article{malkov2018efficient,
