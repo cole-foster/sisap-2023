@@ -54,10 +54,10 @@ jobs:
           conda activate hsp
           python3 search/sisap-script.py
           python3 eval/eval.py
-          python3 eval/plot.py res.csv
+          python3 eval/plot.py res.csv --size 300K
       - uses: actions/upload-artifact@v3
         with:
-          name: Results on 100k
+          name: Results on 300k
           path: | 
             res.csv
-            result_100K.png
+            result_300K.png
