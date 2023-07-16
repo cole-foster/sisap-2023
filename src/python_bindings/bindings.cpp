@@ -248,15 +248,6 @@ class Index {
         for (int i = 0; i < dim; i++) norm_array[i] = data[i] * norm;
     }
 
-    // void addItems(py::buffer_info buffer, py::object ids_ = py::none(), int num_threads = -1, bool replace_deleted =
-    // false) { void addItems(py::object input, py::object ids_ = py::none(), int num_threads = -1, bool replace_deleted
-    // = false) {
-    //  py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
-    //  fsgsertsret
-    //  size_t rows, features;
-    //  get_input_array_shapes(buffer, &rows, &features);
-    //  if (features != dim) throw std::runtime_error("Wrong dimensionality of the vectors");
-
     /**
      * @brief Pass the Data Buffer from NP array- data_array.data
      *
@@ -718,7 +709,6 @@ class Index {
         dist_t* data_numpy_d;
         size_t rows, features;
 
-        appr_alg->metric_distance_computations = 0;
         if (num_threads <= 0) num_threads = num_threads_default;
         {
             py::gil_scoped_release l;
@@ -771,8 +761,6 @@ class Index {
         py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
         py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
 
-        printf("Total Distances: %llu\n", (unsigned long long int)appr_alg->metric_distance_computations);
-
         return py::make_tuple(
             py::array_t<hnswlib::labeltype>({rows, k},  // shape
                                             {k * sizeof(hnswlib::labeltype),
@@ -787,7 +775,6 @@ class Index {
 
     // calls hnswalg::search_beam();
     py::object knnQuery_beam(py::object input, size_t k = 1, int num_threads = -1) {
-
         if (!flag_data_loaded_) {
             printf("Error: Data Pointer Not Let Loaded");
             return py::make_tuple();
@@ -865,9 +852,6 @@ class Index {
                                 free_when_done_d));
     }
 };
-
-
-
 
 template <typename dist_t, typename data_t = float>
 class BFIndex {
@@ -1090,6 +1074,23 @@ PYBIND11_PLUGIN(hnswlib) {
     return m.ptr();
 }
 
-// to stopdfdfdfddddhjklklkklkkl kllklghjmgjhjhsdfgsdfgf dfg fg fg
+// to stopdfdfdfddddhvb
+// fg
+// f
+// df
+// df
 // d
-// /÷/ fd
+
+
+// df
+
+// jklklkklkkl kllklghjmgjhjhsdfgsdfg
+// df
+
+// s
+
+// bncg
+// df
+// d
+
+// dtr

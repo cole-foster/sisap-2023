@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <omp.h>
 #include <stdlib.h>
+#include <chrono>
 
 #include <atomic>
 #include <list>
@@ -50,13 +51,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t size_links_level0_{0};
     size_t offsetData_{0}, offsetLevel0_{0}, label_offset_{0};
 
-    char *data_level0_memory_{nullptr};     // only stores links/labels now- no data
-    char **linkLists_{nullptr};             // stores upper-layer links
-    std::vector<int> element_levels_;       // keeps level of each element
+    char *data_level0_memory_{nullptr};  // only stores links/labels now- no data
+    char **linkLists_{nullptr};          // stores upper-layer links
+    std::vector<int> element_levels_;    // keeps level of each element
 
     // MODIFIED: POINTER TO HOLD ALL DATA. OWNED BY PYTHON.
     size_t data_size_{0};
-    char* data_pointer_{nullptr};   
+    char *data_pointer_{nullptr};
 
     // distance function from space
     DISTFUNC<dist_t> fstdistfunc_;
@@ -70,10 +71,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     mutable std::atomic<long> metric_distance_computations{0};
     mutable std::atomic<long> metric_hops{0};
+    // mutable dist_t averageEntryPointDistance_{0};
 
     // deleted functionality removed...
     bool allow_replace_deleted_ = false;  // flag to replace deleted elements (marked as deleted) during insertions
-    std::mutex deleted_elements_lock;               // lock for deleted_elements
+    std::mutex deleted_elements_lock;     // lock for deleted_elements
     std::unordered_set<tableint> deleted_elements;  // contains internal ids of deleted elements
 
     HierarchicalNSW(SpaceInterface<dist_t> *s) {}
@@ -105,11 +107,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         update_probability_generator_.seed(random_seed + 1);
 
         // MODIFICATIONS
-        size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint); 
-        size_data_per_element_ = size_links_level0_ + sizeof(labeltype);  
+        size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
+        size_data_per_element_ = size_links_level0_ + sizeof(labeltype);
         // old:     size_data_per_element_ = size_links_level0_ + data_size_ + sizeof(labeltype);
-        offsetData_ = size_links_level0_;   // this isn't used anymore
-        label_offset_ = size_links_level0_; 
+        offsetData_ = size_links_level0_;  // this isn't used anymore
+        label_offset_ = size_links_level0_;
         // old:     label_offset_ = size_links_level0_ + data_size_;
         offsetLevel0_ = 0;
 
@@ -173,7 +175,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     // this gives data representation of the point
     inline char *getDataByInternalId(tableint internal_id) const {
-        return (data_pointer_ + internal_id * data_size_); 
+        return (data_pointer_ + internal_id * data_size_);
         // return (data_level0_memory_ + internal_id * size_data_per_element_ + offsetData_);
     }
 
@@ -202,10 +204,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         dist_t lowerBound;
         // if (!isMarkedDeleted(ep_id)) {
-            dist_t dist = fstdistfunc_(data_point, getDataByInternalId(ep_id), dist_func_param_);
-            top_candidates.emplace(dist, ep_id);
-            lowerBound = dist;
-            candidateSet.emplace(-dist, ep_id);
+        dist_t dist = fstdistfunc_(data_point, getDataByInternalId(ep_id), dist_func_param_);
+        top_candidates.emplace(dist, ep_id);
+        lowerBound = dist;
+        candidateSet.emplace(-dist, ep_id);
         // } else {
         //     lowerBound = std::numeric_limits<dist_t>::max();
         //     candidateSet.emplace(-lowerBound, ep_id);
@@ -271,17 +273,17 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return top_candidates;
     }
 
-
     /**
      * @brief Original Bottom Layer Search- not used
-     * 
-     * @tparam has_deletions 
-     * @tparam collect_metrics 
-     * @param ep_id 
-     * @param data_point 
-     * @param ef 
-     * @param isIdAllowed 
-     * @return std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> 
+     *
+     * @tparam has_deletions
+     * @tparam collect_metrics
+     * @param ep_id
+     * @param data_point
+     * @param ef
+     * @param isIdAllowed
+     * @return std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>,
+     * CompareByFirst>
      */
     template <bool has_deletions, bool collect_metrics = false>
     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
@@ -543,7 +545,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return next_closest_entry_point;
     }
 
-
     void resizeIndex(size_t new_max_elements) {
         if (new_max_elements < cur_element_count)
             throw std::runtime_error("Cannot resize, max element is less than the current number of elements");
@@ -721,7 +722,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_t dim = *((size_t *)dist_func_param_);
         std::vector<data_t> data;
         data_t *data_ptr = (data_t *)data_ptrv;
-        for (int i = 0; i < (int) dim; i++) {
+        for (int i = 0; i < (int)dim; i++) {
             data.push_back(*data_ptr);
             data_ptr += 1;
         }
@@ -730,11 +731,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     /**
      * ===========================================================
-     * 
+     *
      *          KEEPING DELETED FUNCTIONALITY, BUT NOT USED
-     * 
+     *
      * ===========================================================
-    */
+     */
 
     /*
      * Marks an element with the given label deleted, does NOT really change the current graph.
@@ -828,9 +829,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     /**
      * ======================================================
-     * 
-     *          REMOVED FUNCTIONS FOR UPDATES 
-     * 
+     *
+     *          REMOVED FUNCTIONS FOR UPDATES
+     *
      * ======================================================
      */
 
@@ -848,11 +849,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     /**
      * @brief Add Point To The Level
-     * 
-     * @param data_point 
-     * @param label 
-     * @param level 
-     * @return tableint 
+     *
+     * @param data_point
+     * @param label
+     * @param level
+     * @return tableint
      */
     tableint addPoint(const void *data_point, labeltype label, int level) {
         tableint cur_c = 0;
@@ -945,7 +946,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return cur_c;
     }
 
-
     void checkIntegrity() {
         int connections_checked = 0;
         std::vector<int> inbound_connections_num(cur_element_count, 0);
@@ -978,13 +978,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::cout << "integrity ok, checked " << connections_checked << " connections\n";
     }
 
-        /**
+    /**
      * @brief ORIGINAL HNSW SEARCH FUNCTION
-     * 
-     * @param query_data 
-     * @param k 
-     * @param isIdAllowed 
-     * @return std::priority_queue<std::pair<dist_t, labeltype>> 
+     *
+     * @param query_data
+     * @param k
+     * @param isIdAllowed
+     * @return std::priority_queue<std::pair<dist_t, labeltype>>
      */
     std::priority_queue<std::pair<dist_t, labeltype>> searchKnn(const void *query_data, size_t k,
                                                                 BaseFilterFunctor *isIdAllowed = nullptr) const {
@@ -1045,18 +1045,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return result;
     }
 
-
     /**
      * ================================================
-     * 
+     *
      *              BEGIN NEW FUNCTIONS
-     * 
+     *
      * ================================================
      */
 
-
     // Get Points in Each Level
-    void getPoints(int level, std::vector<unsigned int> &pointsList) {
+    void getPoints(int level, std::vector<unsigned int> &pointsList) const {
         if (level == 0) {
             printf("Level: %d is just the bottom, all points\n", level);
             // return;
@@ -1070,7 +1068,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // get the points in the layer
         pointsList.clear();
         for (unsigned int i = 0; i < cur_element_count; i++) {
-            if (element_levels_[i] >= level) {
+            if (element_levels_.at(i) >= level) {
                 pointsList.push_back(i);
             }
         }
@@ -1089,7 +1087,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     // find the hsp neighbors of queryIndex within list L
-    void HSP_Test(labeltype queryIndex, std::vector<labeltype> pivots_list, int k, std::vector<labeltype> &neighbors) {
+    void HSP_Test(labeltype const queryIndex, std::vector<labeltype> const &pivots_list, int k,
+                  std::vector<labeltype> &neighbors) {
         neighbors.clear();
         char *q_data = getDataByInternalId(queryIndex);
 
@@ -1170,41 +1169,43 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
      * @param pivots        | output: list of top layer pivots
      * @param assignments   | output: closest pivot for each element
      */
-    void topLayerPivotSelection(dist_t radius, int numThreads, std::vector<labeltype> &pivots,
+    void topLayerPivotSelection(dist_t const radius, int const numThreads, std::vector<labeltype> &pivots,
                                 std::vector<labeltype> &assignments) {
         pivots.clear();
-        assignments.resize(cur_element_count);
         std::vector<bool> vec_covered(cur_element_count, false);  // bool: if element is covered yet
 
         //> Select the Top Layer Pivots: Batch Construction Approach
         for (labeltype p = 0; p < cur_element_count; p++) {
             if (vec_covered[p] == true) continue;
-            pivots.push_back(p);
             vec_covered[p] = true;
+            pivots.push_back(p);
             char *pivot_data = getDataByInternalId(p);
 
 // - iterate through all uncovered points, test if they are covered by this new pivot
 #pragma omp parallel for schedule(static) num_threads(numThreads)
             for (labeltype x = p + 1; x < cur_element_count; x++) {
                 if (vec_covered[x] == true) continue;
-                dist_t distance = fstdistfunc_(pivot_data, getDataByInternalId(x), dist_func_param_);
+                dist_t const distance = fstdistfunc_(pivot_data, getDataByInternalId(x), dist_func_param_);
                 if (distance <= radius) {
                     vec_covered[x] = true;
                 }
             }
         }
 
+        // each point should be assigned to their closest pivot domain
+        assignments.resize(cur_element_count);
+
 //> Assign Each Point To Its Closest Pivot
 #pragma omp parallel for schedule(static) num_threads(numThreads)
         for (labeltype x = 0; x < cur_element_count; x++) {
             char *element_data = getDataByInternalId(x);
-            labeltype closestPivot;
-            dist_t closestPivotDistance = 10000;  // Large number
+            labeltype closestPivot = cur_element_count + 10;  // impossible number, for validation
+            dist_t closestPivotDistance = 1000000.0f;         // Large number
 
             // - iterate through all pivots, find closest
             for (int itp = 0; itp < (int)pivots.size(); itp++) {
-                labeltype pivot_index = pivots[itp];
-                dist_t distance = fstdistfunc_(element_data, getDataByInternalId(pivot_index), dist_func_param_);
+                labeltype const pivot_index = pivots.at(itp);
+                dist_t const distance = fstdistfunc_(element_data, getDataByInternalId(pivot_index), dist_func_param_);
 
                 // - one pivot definitely covers, so no need to check
                 if (distance < closestPivotDistance) {
@@ -1212,8 +1213,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     closestPivot = pivot_index;
                 }
             }
-
-            assignments[x] = closestPivot;
+            assignments.at(x) = closestPivot;
         }
 
         return;
@@ -1227,66 +1227,73 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
      * @param partition
      * @param pivots
      */
-    void secondLayerPivotSelection(dist_t radius, std::vector<labeltype> const &partition, int numThreads,
+    void secondLayerPivotSelection(dist_t const radius, std::vector<labeltype> const &partition, int const numThreads,
                                    std::vector<labeltype> &pivots) {
         // pivots.clear();
-        int numElements = (int)partition.size();
+        int const numElements = (int)partition.size();
         std::vector<bool> vec_covered(numElements, false);  // bool: if element is covered yet
 
         //> First given pivot tested for coverage
-        if (pivots.size() >= 1) {
-            labeltype pivot_index1 = pivots[0];
+        if (pivots.size() > 0) {
+            labeltype const pivot_index1 = pivots.at(0);
             char *pivot1_data = getDataByInternalId(pivot_index1);
 
-            #pragma omp parallel for schedule(static) num_threads(numThreads)
+            // #pragma omp parallel for num_threads(numThreads) schedule(static) 
             for (int itx = 0; itx < numElements; itx++) {
-                if (partition[itx] == pivot_index1) {
-                    vec_covered[itx] = true;
-                    continue;
-                }
-                labeltype element_index = partition[itx];
-                dist_t distance = fstdistfunc_(pivot1_data, getDataByInternalId(element_index), dist_func_param_);
+                labeltype const element_index = partition.at(itx);
+                dist_t const distance = fstdistfunc_(pivot1_data, getDataByInternalId(element_index), dist_func_param_);
                 if (distance <= radius) {
-                    vec_covered[itx] = true;
+                    vec_covered.at(itx) = true;
                 }
             }
         }
+
+        // ISSUE: When above uses multithreading, the pivot1 does not keep the data point as covered... why?
+        //  - this causes all sorts of issues downstream: two second-layer pivots, causing an incorrect mapping
+        //    trying to compute HSP neighbors in parallel on same data caused crash
 
         //> Select the Second Layer Pivots From Partition: Batch Construction Approach
         for (int itp = 0; itp < numElements; itp++) {
-            if (vec_covered[itp] == true) continue;
-            vec_covered[itp] = true;
-            labeltype pivot_index = partition[itp];
+            if (vec_covered.at(itp) == true) continue;
+            labeltype const pivot_index = partition.at(itp);
+
+            // Check that this isn't already a pivot
+            if (std::find(pivots.begin(), pivots.end(), pivot_index) != pivots.end()) {
+                printf("%u: Hold Your Horses! %u is already a pivot! Skipping...\n", pivots[0], pivot_index);
+                continue;
+            }
             pivots.push_back(pivot_index);
+            vec_covered[itp] = true;
             char *pivot_data = getDataByInternalId(pivot_index);
 
-            // - iterate through all uncovered points, test if they are covered by this new pivot
-            #pragma omp parallel for schedule(static) num_threads(numThreads)
+// - iterate through all uncovered points, test if they are covered by this new pivot
+#pragma omp parallel for schedule(static) num_threads(numThreads)
             for (int itx = itp + 1; itx < numElements; itx++) {
-                if (vec_covered[itx] == true) continue;
-                labeltype element_index = partition[itx];
-                dist_t distance = fstdistfunc_(pivot_data, getDataByInternalId(element_index), dist_func_param_);
+                if (vec_covered.at(itx) == true) continue;
+                labeltype const element_index = partition.at(itx);
+                dist_t const distance = fstdistfunc_(pivot_data, getDataByInternalId(element_index), dist_func_param_);
                 if (distance <= radius) {
-                    vec_covered[itx] = true;
+                    vec_covered.at(itx) = true;
                 }
             }
         }
+
         return;
     }
 
-
-
     /**
      * @brief Create the New Hierarchy for HNSW
-     * 
-     * @param radius1 
-     * @param radius2 
-     * @param max_neighborhood_size 
-     * @param max_neighbors 
+     *
+     * @param radius1
+     * @param radius2
+     * @param max_neighborhood_size
+     * @param max_neighbors
      */
-    void selectPivotsAndComputeHSP(dist_t radius1, dist_t radius2, int const max_neighborhood_size, int const max_neighbors) {
+    void selectPivotsAndComputeHSP(dist_t const radius1, dist_t const radius2, int const max_neighborhood_size,
+                                   int const max_neighbors) {
         int numThreads = (int)omp_get_max_threads();
         printf("NumThreads: %d\n", numThreads);
+        std::chrono::high_resolution_clock::time_point tStart, tEnd;
 
         //=======================================================
         //------| PART ONE: PIVOT SELECTION
@@ -1294,27 +1301,31 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         printf("Pivot Selection:\n");
 
         //> Step One: Top Layer Pivot Selection
+        //-------------------------------------------
         std::vector<labeltype> top_layer_pivots{};
         std::vector<labeltype> element_assignments{};
+        tStart = std::chrono::high_resolution_clock::now();
         topLayerPivotSelection(radius1, numThreads, top_layer_pivots, element_assignments);
-        int const number_of_top_layer_pivots = (int) top_layer_pivots.size();
+        tEnd = std::chrono::high_resolution_clock::now();
+        double time_top_layer_selection = std::chrono::duration_cast<std::chrono::duration<double>>(tEnd - tStart).count();
+        printf("  * Layer 1 Pivot Selection Time: %.4f (s)\n",time_top_layer_selection);
+        int const number_of_top_layer_pivots = (int)top_layer_pivots.size();
         printf("  * Layer 1: r1=%.4f, |P1|=%d\n", radius1, number_of_top_layer_pivots);
 
-        // - Create a reverse-map to identify top-layer pivots
+        //   - Create map to identify top-layer pivots
         std::unordered_map<labeltype, int> top_layer_map{};
         for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
-            labeltype pivot_index = top_layer_pivots[itp];
+            labeltype const pivot_index = top_layer_pivots[itp];
             top_layer_map.emplace(pivot_index, itp);
         }
         printf("  * Initialized Layer 1 Index->ID Mapping\n");
 
-
-        // - Organize All Elements Into Top Layer Pivot Domains
+        //   - Organize All Elements Into Top Layer Pivot Domains
         std::vector<std::vector<labeltype>> first_layer_pivot_domains{};
         first_layer_pivot_domains.resize(number_of_top_layer_pivots);
-        #pragma omp parallel for schedule(static) num_threads(numThreads)
+        // #pragma omp parallel for schedule(static) num_threads(numThreads)
         for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
-            labeltype pivot_index = top_layer_pivots[itp];
+            labeltype const pivot_index = top_layer_pivots.at(itp);
             for (labeltype x = 0; x < cur_element_count; x++) {
                 if (element_assignments[x] == pivot_index) {
                     first_layer_pivot_domains[itp].push_back(x);
@@ -1323,66 +1334,129 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         printf("  * Collected Layer 1 Partitions\n");
 
+        // CHECKING ALL TOP LAYER PIVOTS REPRESENTED
+        // std::vector<bool> checkAllElements(cur_element_count, false);
+        // for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
+        //     labeltype const pivot_index = top_layer_pivots.at(itp);
+        //     std::vector<labeltype> const &pivot_domain = first_layer_pivot_domains.at(itp);
+        //
+        //     // iterate through the domain
+        //     for (int itx = 0; itx < (int)pivot_domain.size(); itx++) {
+        //         labeltype const element_index = pivot_domain.at(itx);
+        //         // int const second_layer_iterator = second_layer_map.at(element_index);
+        //         checkAllElements.at(element_index) = true;
+        //     }
+        // }
+        // bool flag_good_elements = true;
+        // for (labeltype element_index = 0; element_index < cur_element_count; element_index++) {
+        //     if (checkAllElements[element_index] == false) {
+        //         flag_good_elements = false;
+        //         printf("Element: %u not represented!\n", element_index);
+        //     }
+        // }
+        // printf("    - Top Pivots Cover All Elements?: %d\n", flag_good_elements);
+
         //> Step Two: Second Layer Pivot Selection
+        //-------------------------------------------
         std::vector<labeltype> second_layer_pivots{};
+        tStart = std::chrono::high_resolution_clock::now();
         for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
-            labeltype pivot_index = top_layer_pivots[itp];
-            std::vector<labeltype>& pivot_partition = first_layer_pivot_domains[itp];
+            labeltype const pivot_index = top_layer_pivots.at(itp);
+            std::vector<labeltype> const &pivot_partition = first_layer_pivot_domains.at(itp);
 
             // perform the pivot selection
             std::vector<labeltype> temp_second_layer_pivots = {pivot_index};
             secondLayerPivotSelection(radius2, pivot_partition, numThreads, temp_second_layer_pivots);
-            second_layer_pivots.insert(second_layer_pivots.begin(), temp_second_layer_pivots.begin(),
+            second_layer_pivots.insert(second_layer_pivots.end(), temp_second_layer_pivots.begin(),
                                        temp_second_layer_pivots.end());
         }
-        int const number_of_second_layer_pivots = (int) second_layer_pivots.size();
+        tEnd = std::chrono::high_resolution_clock::now();
+        double time_second_layer_selection = std::chrono::duration_cast<std::chrono::duration<double>>(tEnd - tStart).count();
+        printf("  * Layer 2 Pivot Selection Time: %.4f (s)\n",time_second_layer_selection);
+        int const number_of_second_layer_pivots = (int)second_layer_pivots.size();
         printf("  * Layer 2: r2=%.4f, |P2|=%d\n", radius2, number_of_second_layer_pivots);
 
-        // - Create a reverse-map to identify second-layer pivots
+        // - Create a map to identify second-layer pivots
         std::unordered_map<labeltype, int> second_layer_map{};
         for (int itp = 0; itp < number_of_second_layer_pivots; itp++) {
-            labeltype pivot_index = second_layer_pivots[itp];
+            labeltype const pivot_index = second_layer_pivots.at(itp);
             second_layer_map.emplace(pivot_index, itp);
         }
         printf("  * Initialized Layer 2 Index->ID Mapping\n");
 
+
         //> - Get pivot domains of layer 2 pivots in top layer
         first_layer_pivot_domains.clear();
         first_layer_pivot_domains.resize(number_of_top_layer_pivots);
-        // #pragma omp parallel for schedule(static) num_threads(numThreads)
+        // #pragma omp parallel for schedule(dynamic) num_threads(numThreads)
         for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
-            labeltype pivot_index = top_layer_pivots[itp];
+            labeltype const pivot_index = top_layer_pivots.at(itp);
+            std::vector<labeltype> &pivot_domain = first_layer_pivot_domains.at(itp);
 
             // - find all second layer pivots that belong to the domain
             for (int itx = 0; itx < number_of_second_layer_pivots; itx++) {
-                labeltype element_index = second_layer_pivots[itx];
-                if (element_assignments[element_index] == pivot_index) {
-                    first_layer_pivot_domains[itp].push_back(element_index);
+                labeltype const element_index = second_layer_pivots.at(itx);
+                labeltype const true_element_parent = element_assignments.at(element_index);
+                if (element_index == pivot_index || true_element_parent == pivot_index) {
+                    pivot_domain.push_back(element_index);
                 }
             }
         }
         printf("  * Re-Collected Layer 1 For Layer 2 Pivots\n");
+
+        // CHECKING ALL SECOND LAYER PIVOTS REPRESENTED
+        std::vector<bool> checkAllPivots(number_of_second_layer_pivots, false);
+        for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
+            labeltype const pivot_index = top_layer_pivots.at(itp);
+            std::vector<labeltype> const &pivot_domain = first_layer_pivot_domains.at(itp);
+            for (int itx = 0; itx < (int)pivot_domain.size(); itx++) {
+                labeltype const element_index = pivot_domain.at(itx);
+                int const second_layer_iterator = second_layer_map.at(element_index);
+                checkAllPivots.at(second_layer_iterator) = true;
+            }
+        }
+        bool flag_good_pivots = true;
+        for (int itp = 0; itp < number_of_second_layer_pivots; itp++) {
+            if (checkAllPivots.at(itp) == false) {
+                flag_good_pivots = false;
+                labeltype const pivot_index = second_layer_pivots.at(itp);
+                labeltype const true_parent = element_assignments[pivot_index];
+                printf("Pivot2: %u not represented! --> parent: %u \n", pivot_index, true_parent);
+            }
+        }
+        printf("    - All Second Layer Pivots Are Represented?: %d\n",flag_good_pivots);
+
 
         //=======================================================
         //------| PART TWO: HSP GRAPH CONSTRUCTION
         //=======================================================
         printf("HSP GRAPH CONSTRUCTION:\n");
 
-        // Step Three: Compute Top Layer HSP
+        //> Step Three: Compute Top Layer HSP
+        //-------------------------------------------
         printf("  * Begin Layer 1 HSP Graph\n");
         std::vector<std::vector<labeltype>> top_layer_hsp_graph{};
         top_layer_hsp_graph.resize(number_of_top_layer_pivots);
-        #pragma omp parallel for schedule(static) num_threads(numThreads)
+        tStart = std::chrono::high_resolution_clock::now();
+        #pragma omp parallel for schedule(dynamic) num_threads(numThreads)
         for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
-            labeltype pivot_index = top_layer_pivots[itp];
-            HSP_Test(pivot_index, top_layer_pivots, max_neighborhood_size, top_layer_hsp_graph[itp]);
+            labeltype const pivot_index = top_layer_pivots.at(itp);
+            std::vector<labeltype> neighbors_temp{};
+            HSP_Test(pivot_index, top_layer_pivots, max_neighborhood_size, neighbors_temp);
+            top_layer_hsp_graph.at(itp) = neighbors_temp;
         }
+        tEnd = std::chrono::high_resolution_clock::now();
+        double time_top_hsp = std::chrono::duration_cast<std::chrono::duration<double>>(tEnd - tStart).count();
+        printf("  * Layer 1 HSP Time: %.4f (s)\n",time_top_hsp);
+
+
         printf("  |--Stats on Top Layer HSP: \n");
-        int minDegree1 = number_of_top_layer_pivots + 1;
+        int minDegree1 = 1000000;
         int maxDegree1 = 0;
         double aveDegree1 = 0;
         for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
-            int numNeighbors = (int)top_layer_hsp_graph[itp].size();
+            std::vector<labeltype> const &pivot_neighbors = top_layer_hsp_graph.at(itp);
+            int const numNeighbors = (int)pivot_neighbors.size();
             if (numNeighbors < minDegree1) minDegree1 = numNeighbors;
             if (numNeighbors > maxDegree1) maxDegree1 = numNeighbors;
             aveDegree1 += (double)numNeighbors;
@@ -1391,49 +1465,60 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         printf("    - max degree1: %d\n", maxDegree1);
         printf("    - ave degree1: %.4f\n", aveDegree1 / (double)number_of_top_layer_pivots);
 
+
+        //>  Step Four: Compute Second Layer HSP
+        //-------------------------------------------
         printf("  * Begin Layer 2 HSP Graph\n");
         double ave_neighborhood_size = 0;
-        // Step Four: Compute Second Layer HSP
         std::vector<std::vector<labeltype>> second_layer_hsp_graph{};
         second_layer_hsp_graph.resize(number_of_second_layer_pivots);
+        tStart = std::chrono::high_resolution_clock::now();
         for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
-            labeltype pivot_index = top_layer_pivots[itp];
-            std::vector<labeltype> const &pivot_partition = first_layer_pivot_domains[itp];
-            std::vector<labeltype> const &hsp_neighbors = top_layer_hsp_graph[itp];
+            labeltype const pivot_index = top_layer_pivots.at(itp);
+            std::vector<labeltype> const &pivot_partition = first_layer_pivot_domains.at(itp);
+            std::vector<labeltype> const &hsp_neighbors = top_layer_hsp_graph.at(itp);
 
             // - collect hsp domain of pivot_index
             std::vector<labeltype> hsp_domain = pivot_partition;
             for (int itn = 0; itn < (int)hsp_neighbors.size(); itn++) {
-                labeltype neighbor_index = hsp_neighbors[itn];
-                int top_pivot_iterator = top_layer_map[neighbor_index];
-                std::vector<labeltype> const &neighbor_partition = first_layer_pivot_domains[top_pivot_iterator];
-                hsp_domain.insert(hsp_domain.begin(), neighbor_partition.begin(), neighbor_partition.end());
+                labeltype const neighbor_index = hsp_neighbors.at(itn);
+                int const top_pivot_iterator = top_layer_map.at(neighbor_index);
+                std::vector<labeltype> const &neighbor_partition = first_layer_pivot_domains.at(top_pivot_iterator);
+                hsp_domain.insert(hsp_domain.end(), neighbor_partition.begin(), neighbor_partition.end());
             }
-            ave_neighborhood_size += (double) hsp_domain.size();
+            ave_neighborhood_size += (double)hsp_domain.size();
+
+            int const numThreadsToUse = std::min(numThreads, (int)pivot_partition.size());
 
             // - find hsp neighbors for all pivots in domain in parallel from same spotlight
-            #pragma omp parallel for schedule(static) num_threads(numThreads)
+#pragma omp parallel for schedule(dynamic) num_threads(numThreadsToUse)
             for (int itx = 0; itx < (int)pivot_partition.size(); itx++) {
-                labeltype const query_index = pivot_partition[itx];
-                int second_pivot_iterator = second_layer_map[query_index];
-                if (second_pivot_iterator < 0 || second_pivot_iterator >= number_of_second_layer_pivots) {
-                    throw std::runtime_error("second-layer iterator error: q map not within pivots");
-                }
-                HSP_Test(query_index, hsp_domain, max_neighborhood_size, second_layer_hsp_graph[second_pivot_iterator]);
+                labeltype const query_index = pivot_partition.at(itx);
+                int const second_pivot_iterator = second_layer_map.at(query_index);
+
+                // the error: two of the same pivots, two to one mapping, parallel execution on same thing
+                std::vector<labeltype> temp_neighbors{};
+                HSP_Test(query_index, hsp_domain, max_neighborhood_size, temp_neighbors);
+                second_layer_hsp_graph.at(second_pivot_iterator) = temp_neighbors;
             }
         }
+        tEnd = std::chrono::high_resolution_clock::now();
+        double time_second_hsp = std::chrono::duration_cast<std::chrono::duration<double>>(tEnd - tStart).count();
+        printf("  * Layer 2 HSP Time: %.4f (s)\n",time_second_hsp);
+
 
         printf("|-- Stats on Second Layer HSP: \n");
-        int minDegree2 = number_of_second_layer_pivots + 1;
+        int minDegree2 = 1000000;
         int maxDegree2 = 0;
         double aveDegree2 = 0;
         for (int itp = 0; itp < number_of_second_layer_pivots; itp++) {
-            int numNeighbors = (int)second_layer_hsp_graph[itp].size();
+            std::vector<labeltype> const &temp_neighbors = second_layer_hsp_graph.at(itp);
+            int numNeighbors = (int)temp_neighbors.size();
             if (numNeighbors < minDegree2) minDegree2 = numNeighbors;
             if (numNeighbors > maxDegree2) maxDegree2 = numNeighbors;
             aveDegree2 += (double)numNeighbors;
         }
-        printf("    - ave hsp domain size: %.4f\n", ave_neighborhood_size / (double) number_of_top_layer_pivots);
+        printf("    - ave hsp domain size: %.4f\n", ave_neighborhood_size / (double)number_of_top_layer_pivots);
         printf("    - max neighborhood size: %d\n", max_neighborhood_size);
         printf("    - min degree2: %d\n", minDegree2);
         printf("    - max degree2: %d\n", maxDegree2);
@@ -1443,6 +1528,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         //------| PART THREE: SETTING HIERARCHY
         //=======================================================
         printf("SETTING HIERARCHY:\n");
+        tStart = std::chrono::high_resolution_clock::now();
 
         //  A: Delete the existing pivots and their links, change all pivots to bottom layer
         deletePivotsAndLinks();
@@ -1456,24 +1542,26 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         printf("  -> Set Max Levels: %d\n", maxlevel_);
 
         //  C. Add Pivots To Second Layer
-#pragma omp parallel for schedule(static) num_threads(numThreads)
+        // #pragma omp parallel for schedule(static) num_threads(numThreads)
         for (int itp = 0; itp < number_of_second_layer_pivots; itp++) {
-            tableint const pivot_index = second_layer_pivots[itp];
+            tableint const pivot_index = (tableint)second_layer_pivots[itp];
             element_levels_[pivot_index] = 1;  // second layer
         }
 
         //  D. Add Pivots To Top Layer
-#pragma omp parallel for schedule(static) num_threads(numThreads)
+        // #pragma omp parallel for schedule(static) num_threads(numThreads)
         for (int itp = 0; itp < number_of_top_layer_pivots; itp++) {
             tableint const pivot_index = top_layer_pivots[itp];
             element_levels_[pivot_index] = 2;  // second layer
         }
-        enterpoint_node_ = top_layer_pivots[0];
         printf("  -> Added All Pivots\n");
 
+        enterpoint_node_ = top_layer_pivots[0];
+        printf("  -> EnterPoint Node: %u\n", (unsigned int)enterpoint_node_);
+
         // E. Allocate the memory needed for each pivot (MODIFYING)
-        maxM_ = (size_t) max_neighbors; // MAX NUMBER OF TOP LAYER PIVOTS
-        size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint); // original, line~124
+        maxM_ = (size_t)max_neighbors;                                                 // uni-direction
+        size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);  // original, line~124
         for (tableint pivot_index = 0; pivot_index < (tableint)cur_element_count; pivot_index++) {
             if (element_levels_[pivot_index] == 0) continue;
             linkLists_[pivot_index] = (char *)malloc(size_links_per_element_ * element_levels_[pivot_index] + 1);
@@ -1481,85 +1569,81 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         printf("  -> Initialized memory\n");
 
         // F. Set the Neighbors of the Top Level Pivots
-        #pragma omp parallel for schedule(static) num_threads(numThreads)
+        // #pragma omp parallel for schedule(static) num_threads(numThreads)
         for (int itp = 0; itp < (int)top_layer_pivots.size(); itp++) {
-            tableint const pivot_index = top_layer_pivots[itp];
-            std::vector<labeltype> neighbors = top_layer_hsp_graph[itp];
+            tableint const pivot_index = (tableint)top_layer_pivots.at(itp);
+            std::vector<labeltype> const &neighbors = top_layer_hsp_graph.at(itp);
 
             // can only have up to max_neighbors;
-            while (max_neighbors < (int)neighbors.size()) {
-                neighbors.pop_back();
-            }
+            int const size_neighbors = std::min((int)neighbors.size(), max_neighbors);
 
             // get pointer to the list of neighbors.
             linklistsizeint *ll_cur = get_linklist(pivot_index, 2);  // top level is 2
 
             // initialize this pointer with however many neighbors there actually are
-            setListCount(ll_cur, (unsigned short)neighbors.size());
+            setListCount(ll_cur, (unsigned short)size_neighbors);
 
             // format the pointer of this
             tableint *data = (tableint *)(ll_cur + 1);
 
             // add the neighbors!
-            for (int it2 = 0; it2 < (int)neighbors.size(); it2++) {
-                data[it2] = (tableint) neighbors[it2];
+            for (int it2 = 0; it2 < size_neighbors; it2++) {
+                data[it2] = (tableint)neighbors[it2];
             }
         }
+        printf("  -> Set top layer neighbors\n");
 
         // F. Set the Neighbors of the Second Level Pivots
-        #pragma omp parallel for schedule(static) num_threads(numThreads)
+        // #pragma omp parallel for schedule(static) num_threads(numThreads)
         for (int itp = 0; itp < (int)second_layer_pivots.size(); itp++) {
-            tableint const pivot_index = second_layer_pivots[itp];
-            std::vector<labeltype> neighbors = second_layer_hsp_graph[itp];
+            tableint const pivot_index = (tableint)second_layer_pivots[itp];
+            std::vector<labeltype> const &neighbors = second_layer_hsp_graph[itp];
 
             // can only have up to max_neighbors;
-            while (max_neighbors < (int)neighbors.size()) {
-                neighbors.pop_back();
-            }
+            int const size_neighbors = std::min((int)neighbors.size(), max_neighbors);
 
             // get pointer to the list of neighbors.
             linklistsizeint *ll_cur = get_linklist(pivot_index, 1);  // middle level is 1
 
             // initialize this pointer with however many neighbors there actually are
-            setListCount(ll_cur, (unsigned short)neighbors.size());
+            setListCount(ll_cur, (unsigned short)size_neighbors);
 
             // format the pointer of this
             tableint *data = (tableint *)(ll_cur + 1);
 
             // add the neighbors!
-            for (int it2 = 0; it2 < (int)neighbors.size(); it2++) {
+            for (int it2 = 0; it2 < (int)size_neighbors; it2++) {
                 data[it2] = (tableint)neighbors[it2];
             }
         }
-        printf("  -> Added Links\n");
+        printf("  -> Set bottom layer neighbors\n");
+
+        tEnd = std::chrono::high_resolution_clock::now();
+        double time_set = std::chrono::duration_cast<std::chrono::duration<double>>(tEnd - tStart).count();
+        printf("  * Total Set Time: %.4f (s)\n",time_set);
 
         return;
     }
 
-
-
-
-
     /**
      * ============================================================
-     * 
+     *
      *      -------------------------------------------------
      *      |                                               |
      *      |               SEARCH ALGORITHMS               |
      *      |                                               |
      *      -------------------------------------------------
-     * 
+     *
      * ============================================================
      */
 
-
     /**
-     * 
+     *
      * @brief Revised HNSW Search Algorithm: contained, no filter
-     * 
-     * @param query_data 
-     * @param k 
-     * @return std::priority_queue<std::pair<dist_t, labeltype>> 
+     *
+     * @param query_data
+     * @param k
+     * @return std::priority_queue<std::pair<dist_t, labeltype>>
      */
     std::priority_queue<std::pair<dist_t, labeltype>> search_hnsw(const void *query_data, size_t k) const {
         std::priority_queue<std::pair<dist_t, labeltype>> result;
@@ -1600,6 +1684,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
         }
 
+        
+
         //> SEARCH THE BOTTOM LAYER
         size_t ef = std::max(ef_, k);
 
@@ -1610,9 +1696,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         // - initialize lists
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
-            top_candidates;     // containing the closest visited nodes (to be size ef)
+            top_candidates;  // containing the closest visited nodes (to be size ef)
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
-            candidate_set;      // containing the list of nodes to visit
+            candidate_set;  // containing the list of nodes to visit
 
         // - initialize with bottom layer graph entry point
         dist_t dist = fstdistfunc_(query_data, getDataByInternalId(currObj), dist_func_param_);
@@ -1620,6 +1706,20 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         top_candidates.emplace(dist, currObj);
         candidate_set.emplace(-dist, currObj);
         visited_array[currObj] = visited_array_tag;
+
+        //- STATISTICS--- RMOVE, NOT ATOMIC
+        // averageEntryPointDistance_ += lowerBound;
+        // std::vector<unsigned int> pointsList{};
+        // getPoints(1, pointsList);
+        // dist_t closestPivotDistance = 10000;
+        // for (int it1 = 0; it1 < (int) pointsList.size(); it1++) {
+        //     tableint pivot_index = (tableint) pointsList[it1];
+        //     dist_t distance1 = fstdistfunc_(query_data, getDataByInternalId(pivot_index), dist_func_param_);
+        //     if (distance1 < closestPivotDistance) {
+        //         closestPivotDistance = distance1;
+        //     }
+        // }
+        // averageEntryPointDistance_ += closestPivotDistance; // DISTANCE TO ENTRY POINT
 
         // - depth-first iteratation through the list of candidate points on bottom layer
         while (!candidate_set.empty()) {
@@ -1640,7 +1740,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 metric_distance_computations += size;
             }
 
-            // pre-fetch the information into cache... 
+            // pre-fetch the information into cache...
 
             // iterate through each neighbor
             for (size_t j = 1; j <= size; j++) {
@@ -1681,15 +1781,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return result;
     }
 
-
     /**
-     * 
+     *
      * @brief The Beam Search Algo by Chavez et al.
-     * 
-     * 
-     * @param query_data 
-     * @param k 
-     * @return std::priority_queue<std::pair<dist_t, labeltype>> 
+     *
+     *
+     * @param query_data
+     * @param k
+     * @return std::priority_queue<std::pair<dist_t, labeltype>>
      */
     std::priority_queue<std::pair<dist_t, labeltype>> search_beam(const void *query_data, size_t k) const {
         std::priority_queue<std::pair<dist_t, labeltype>> result;
@@ -1703,23 +1802,23 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         //  - initialize the knn and beam objects
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
-            top_candidates;     // containing the k closest points: max_queue- keep at k
+            top_candidates;  // containing the k closest points: max_queue- keep at k
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
-            candidate_set;      // containing the beam: min_queue
+            candidate_set;  // containing the beam: min_queue
 
         // - initialize the kNN with random points
         size_t ef = std::max(ef_, k);
         for (size_t i = 0; i < ef; i++) {
-            tableint random_node = (tableint) (rand() % cur_element_count);
+            tableint random_node = (tableint)(rand() % cur_element_count);
             dist_t d = fstdistfunc_(query_data, getDataByInternalId(random_node), dist_func_param_);
-            top_candidates.emplace(d, random_node);    
-            if (top_candidates.size() > k) top_candidates.pop(); // delete the largest element
+            top_candidates.emplace(d, random_node);
+            if (top_candidates.size() > k) top_candidates.pop();  // delete the largest element
         }
 
         //  - repeat while result set improves
         bool flag_changed = true;
         while (flag_changed) {
-            dist_t prev_furthest = top_candidates.top().first; // to measure improvement
+            dist_t prev_furthest = top_candidates.top().first;  // to measure improvement
 
             // - get the closest point in the top_candidates, as the last element (smallest)
             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
@@ -1759,9 +1858,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
                             // if added to top k, then let's explore:
                             if (dist < top_candidates.top().first || top_candidates.size() < k) {
-                                candidate_set.emplace(-dist, candidate_id);         
-                                top_candidates.emplace(dist, candidate_id);          // add to list
-                                if (top_candidates.size() > k) top_candidates.pop(); // remove largest
+                                candidate_set.emplace(-dist, candidate_id);
+                                top_candidates.emplace(dist, candidate_id);           // add to list
+                                if (top_candidates.size() > k) top_candidates.pop();  // remove largest
                             }
                         }
                     }
@@ -1774,7 +1873,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         // release the visisted list
         visited_list_pool_->releaseVisitedList(vl);
-        
+
         // only keep the k closest points
         while (top_candidates.size() > k) {
             top_candidates.pop();
@@ -1786,6 +1885,5 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         return result;
     }
-
 };
 }  // namespace hnswlib

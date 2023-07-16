@@ -1,5 +1,6 @@
 hnswlib.egg-info/
 build/
+build1/
 dist/
 tmp/
 python_bindings/tests/__pycache__/
