@@ -29,7 +29,7 @@ def prepare(kind, size):
     }
     
     for version, url in task.items():
-        download(url, os.path.join("data", kind, size, f"{version}.h5"))
+        download(url, os.path.join(data_dir,"data", kind, size, f"{version}.h5"))
 
 def store_results(dst, algo, kind, D, I, buildtime, querytime, params, size):
     os.makedirs(Path(dst).parent, exist_ok=True)
@@ -59,8 +59,8 @@ def run(kind, key, size, M, ef_construction):
     
     #> Load Dataset- download if necessary
     prepare(kind, size)
-    data = np.ascontiguousarray(h5py.File(os.path.join("data", kind, size, "dataset.h5"), "r")[key],dtype=np.float32) 
-    queries = np.array(h5py.File(os.path.join("data", kind, size, "query.h5"), "r")[key],dtype=np.float32)
+    data = np.ascontiguousarray(h5py.File(os.path.join(data_dir,"data", kind, size, "dataset.h5"), "r")[key],dtype=np.float32) 
+    queries = np.array(h5py.File(os.path.join(data_dir,"data", kind, size, "query.h5"), "r")[key],dtype=np.float32)
     n, d = data.shape
     ids = np.arange(n) # element ids
     print("Printing Array Information: Ensure Contiguous Array")
@@ -86,53 +86,69 @@ def run(kind, key, size, M, ef_construction):
 
     #> Get the buffer (contains pointer to dataset in memory)
     data_buffer = data.data
+
+    #> Build or Load the Normal HNSW Index
+    index_path_name = os.path.join(data_dir,"index", kind, size, f"{index_identifier}.bin")
+    if os.path.exists(index_path_name):
+        print("Loading Normal Index from: ",index_path_name)
+        start = time.time()
+        index.load_index(index_path_name, max_elements = n)
+        elapsed_build = time.time() - start
+        print(f"Loaded Normal Index in {elapsed_build}s.")
+        index.load_dataset(data_buffer)  # always load dataset on load
+
+    else:
+        # if not, let's create and save the index
+        os.makedirs(Path(index_path_name).parent, exist_ok=True)
         
-    # train the index
-    print(f"Training index on {data.shape}")
-    start_time = time.time()
-    index.init_index(max_elements=n, ef_construction=ef_construction, M=M)
-    index.add_items(data_buffer, ids)
-    elapsed_build = time.time() - start_time
-    print(f"Done training in {elapsed_build}s.")
+        # train the index
+        print(f"Training index on {data.shape}")
+        start = time.time()
+        index.init_index(max_elements=n, ef_construction=ef_construction, M=M)
+        index.add_items(data_buffer, ids)
+        elapsed_build = time.time() - start
+        print(f"Done training in {elapsed_build}s.")
+
+        # save index to file 
+        index.save_index(index_path_name)
+        print(f"Saved Index To: {index_path_name}")
     index.print_hierarchy()
 
     # search with the normal index
-    ef_vec = [10, 20, 30, 50, 70, 100, 140, 190, 250, 320, 400, 500, 650, 800, 1000]
+    ef_vec = [10] #, 20, 30, 50, 70, 100, 140, 190, 250]
     for ef in ef_vec:
         print(f"Starting search on {queries.shape} with ef={ef}")
-        start_time = time.time()
+        start = time.time()
         index.set_ef(ef)  # ef should always be > k
         labels, distances = index.knn_hnsw(queries, k=10)
-        elapsed_search = time.time() - start_time
+        elapsed_search = time.time() - start
         print(f"Done searching in {elapsed_search}s.")
 
         # save the results
-        name_identifier = "HNSW"
+        identifier_modified = f"{index_identifier}-original"
         labels = labels + 1 # FAISS is 0-indexed, groundtruth is 1-indexed
-        identifier = f"index=({name_identifier}),query=(ef={ef})"
-        store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), name_identifier, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
+        identifier = f"index=({identifier_modified}),query=(ef={ef})"
+        store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), identifier_modified, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
 
-    # create the approximate hsp on each layer
-    start_time = time.time()
+
+    # perform our thing I guess
     index.monotonic_hierarchy()
-    elapsed_construction_time = time.time() - start_time
-    print(f"Done searching in {elapsed_construction_time}s.")
 
-    # search with the revised index
-    ef_vec = [10, 20, 30, 50, 70, 100, 140, 190, 250, 320, 400, 500, 650, 800, 1000]
+    # search with the normal index
+    ef_vec = [10] #, 20, 30, 50, 70, 100, 140, 190, 250]
     for ef in ef_vec:
         print(f"Starting search on {queries.shape} with ef={ef}")
-        start_time = time.time()
+        start = time.time()
         index.set_ef(ef)  # ef should always be > k
         labels, distances = index.knn_hnsw(queries, k=10)
-        elapsed_search = time.time() - start_time
+        elapsed_search = time.time() - start
         print(f"Done searching in {elapsed_search}s.")
 
         # save the results
-        name_identifier = "HNSW-HSP"
+        identifier_modified = f"{index_identifier}-hsp"
         labels = labels + 1 # FAISS is 0-indexed, groundtruth is 1-indexed
-        identifier = f"index=({name_identifier}),query=(ef={ef})"
-        store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), name_identifier, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
+        identifier = f"index=({identifier_modified}),query=(ef={ef})"
+        store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), identifier_modified, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
 
 
 if __name__ == "__main__":
@@ -140,17 +156,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--size",
         type=str,
-        default="300K"
+        default="100K"
     )
     parser.add_argument(
         "--M",
         type=int,
-        default=20,
+        default=10,
     )
     parser.add_argument(
         "--EF",
         type=int,
-        default=800,
+        default=100,
     )
     args = parser.parse_args()
     assert args.size in ["100K", "300K", "10M", "30M", "100M"]

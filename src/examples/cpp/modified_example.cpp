@@ -28,14 +28,10 @@ int main() {
     memcpy(dataPointer_, data, total_size_bytes);
     alg_hnsw->data_pointer_ = dataPointer_;
 
- 
-
-
     // call the pivot selection thing
+    alg_hnsw->createMonotonicHierarchy();
 
-    alg_hnsw->selectPivotsAndComputeHSP(2, 1.6, 100, 10);
-
-   // // Add data to index
+    // Add data to index
     // for (int i = 0; i < max_elements; i++) {
     //     alg_hnsw->addPoint(data + i * dim, i);
     // }

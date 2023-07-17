@@ -133,17 +133,13 @@ inline std::vector<size_t> get_input_ids_and_check_shapes(const py::object& ids_
     return ids;
 }
 
-/*
-====================================================================================================================
-|
-|
-|
-                    HNSW BINDING CLASS
-|
-|
-|
-====================================================================================================================
-*/
+/**
+ *              PYTHON BINDING CLASS
+ *
+ *
+ *
+ *
+ */
 
 template <typename dist_t, typename data_t = float>
 class Index {
@@ -692,37 +688,9 @@ class Index {
      */
 
     // MODIFIED: PIVOT SELECTION AND HSP GRAPH CONSTRUCTION
-    void monotonic_hierarchy() {
-
-        // printf("Lets print some neighbors before...\n");
-        // std::vector<hnswlib::tableint> pivots_list{};
-        // appr_alg->getPivotsInLevel(1, pivots_list);
-        // for (int it1 = 0; it1 < 10; it1++) {
-        //     hnswlib::tableint pivot_index = pivots_list[it1];
-        //     std::vector<hnswlib::tableint> neighbors{};
-        //     appr_alg->getNeighborsInLevel(1, pivot_index, neighbors);
-        //     printf("  - %d: %u --> %d: {", it1, (unsigned int)pivot_index, (int)neighbors.size());
-        //     for (int it2 = 0; it2 < (int)neighbors.size(); it2++) {
-        //         printf("%u,", neighbors[it2]);
-        //     }
-        //     printf("}\n");
-        // }
-
-        // monotonic hierarchy construction
-        appr_alg->createMonotonicHierarchy();
-
-        // printf("Lets print some neighbors after...\n");
-        // for (int it1 = 0; it1 < 10; it1++) {
-        //     hnswlib::tableint pivot_index = pivots_list[it1];
-        //     std::vector<hnswlib::tableint> neighbors{};
-        //     appr_alg->getNeighborsInLevel(1, pivot_index, neighbors);
-        //     printf("  - %d: %u --> %d: {", it1, (unsigned int)pivot_index, (int)neighbors.size());
-        //     for (int it2 = 0; it2 < (int)neighbors.size(); it2++) {
-        //         printf("%u,", neighbors[it2]);
-        //     }
-        //     printf("}\n");
-        // }
-
+    void select_and_graph(dist_t radius1, dist_t radius2, int max_neighborhood, int max_neighbors) {
+        printf("Pivot Selection: Only Run with Initialized Index\n");
+        appr_alg->selectPivotsAndComputeHSP(radius1, radius2, max_neighborhood, max_neighbors);
         return;
     }
 
@@ -741,11 +709,7 @@ class Index {
         dist_t* data_numpy_d;
         size_t rows, features;
 
-        // appr_alg->averageClosestPivotDistance_ = 0;
-        // appr_alg->averageEntryPointDistance_ = 0;
-
         if (num_threads <= 0) num_threads = num_threads_default;
-        // num_threads = 1;  // TEMP:
         {
             py::gil_scoped_release l;
             get_input_array_shapes(buffer, &rows, &features);
@@ -796,9 +760,6 @@ class Index {
         }
         py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
         py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
-
-        // printf("Ave Distance to Closest Pivot: %.4f\n", appr_alg->averageClosestPivotDistance_ / (double)rows);
-        // printf("Ave Distance to Entry: %.4f\n", appr_alg->averageEntryPointDistance_ / (double)rows);
 
         return py::make_tuple(
             py::array_t<hnswlib::labeltype>({rows, k},  // shape
@@ -891,18 +852,6 @@ class Index {
                                 free_when_done_d));
     }
 };
-
-/*
-====================================================================================================================
-|
-|
-|
-                    BRUTE FORCE BINDINGS CLASS
-|
-|
-|
-====================================================================================================================
-*/
 
 template <typename dist_t, typename data_t = float>
 class BFIndex {
@@ -1041,22 +990,9 @@ class BFIndex {
     }
 };
 
-/*
-====================================================================================================================
-|
-|
-|
-                    ACTUAL PYTHON BINDING PLUGIN FOR PYBIND
-|
-|
-|
-====================================================================================================================
-*/
-
 PYBIND11_PLUGIN(hnswlib) {
-    py::module m("hnswlib");
+    py::module m("hnswlib");  // MODIFIED: Changed name
 
-    // The HNSW Bindings
     py::class_<Index<float>>(m, "Index")
         .def(py::init(&Index<float>::createFromParams), py::arg("params"))
         /* WARNING: Index::createFromIndex is not thread-safe with Index::addItems */
@@ -1115,12 +1051,13 @@ PYBIND11_PLUGIN(hnswlib) {
              [](const Index<float>& a) {
                  return "<hnswlib.Index(space='" + a.space_name + "', dim=" + std::to_string(a.dim) + ")>";
              })
+        // new stuff
         .def("print_hierarchy", &Index<float>::print_hierarchy)
-        .def("monotonic_hierarchy", &Index<float>::monotonic_hierarchy)
+        .def("select_and_graph", &Index<float>::select_and_graph, py::arg("radius1"), py::arg("radius2"),
+             py::arg("max_neighborhood") = 10000, py::arg("max_neighbors") = 10)
         .def("knn_hnsw", &Index<float>::knnQuery_hnsw, py::arg("data"), py::arg("k") = 1, py::arg("num_threads") = -1)
         .def("knn_beam", &Index<float>::knnQuery_beam, py::arg("data"), py::arg("k") = 1, py::arg("num_threads") = -1);
 
-    // The Brute Force Bindings
     py::class_<BFIndex<float>>(m, "BFIndex")
         .def(py::init<const std::string&, const int>(), py::arg("space"), py::arg("dim"))
         .def("init_index", &BFIndex<float>::init_new_index, py::arg("max_elements"))
@@ -1137,14 +1074,23 @@ PYBIND11_PLUGIN(hnswlib) {
     return m.ptr();
 }
 
+// to stopdfdfdfddddhvb
+// fg
+// f
+// df
+// df
+// d
+
+
 // df
 
-// dg
-// s
-// s
-// s
-// s
-// s
-// s
+// jklklkklkkl kllklghjmgjhjhsdfgsdfg
+// df
 
 // s
+
+// bncg
+// df
+// d
+
+// dtr
