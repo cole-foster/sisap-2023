@@ -75,6 +75,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     mutable dist_t averageEntryPointDistance_{0};
     mutable dist_t averageClosestPivotDistance_{0};
 
+    std::vector<std::vector<tableint>> pivot_index_vectors{};
+
     // deleted functionality removed...
     bool allow_replace_deleted_ = false;  // flag to replace deleted elements (marked as deleted) during insertions
     std::mutex deleted_elements_lock;     // lock for deleted_elements
@@ -1369,6 +1371,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 int const num_coarse_pivots = (int)coarse_pivot_list.size();
                 printf("    * Number of Coarse Pivots: %d\n", num_coarse_pivots);
 
+                printf("    * Assigning Pivots to Domain of Closest Coarse Pivots...\n");
+                std::chrono::high_resolution_clock::time_point tStart_A, tEnd_A;
+                tStart_A = std::chrono::high_resolution_clock::now();
+
                 //  - organize all pivots into coarse pivot domains
                 std::vector<tableint> domain_assignments(num_pivots, cur_element_count+10);
 
@@ -1415,6 +1421,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         }
                     }
                 }
+                tEnd_A = std::chrono::high_resolution_clock::now();
+                double time_A = std::chrono::duration_cast<std::chrono::duration<double>>(tEnd_A - tStart_A).count();
+                printf("    * Done assigning pivots in %.3f seconds\n", time_A);
 
                 //  - collect some stats
                 int minDomainSize = cur_element_count + 10;
@@ -1448,12 +1457,19 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     coarse_pivot_map.emplace(coarse_pivot_index, itp);
                 }
 
+                printf("    * Computing Approximate HSP Using Pivot Domains..\n");
+                std::chrono::high_resolution_clock::time_point tStart_H, tEnd_H;
+                tStart_H = std::chrono::high_resolution_clock::now();
+
                 //  - create the hsp graph
                 #pragma omp parallel for schedule(dynamic) num_threads(numThreadsToUse)
                 for (int itp = 0; itp < num_coarse_pivots; itp++) {
                     tableint const coarse_pivot_index = coarse_pivot_list.at(itp);
                     std::vector<tableint> const &coarse_pivot_domain = coarse_pivot_domains.at(itp);
                     std::vector<tableint> coarse_pivot_neighbors{};
+
+                    // - print for knowing timing
+                    if (itp % 10 == 0) printf("      - %d/%d\n",itp,num_coarse_pivots);
 
                     //  - get hsp neighbors of coarse pivot
                     std::vector<tableint> coarse_pivot_hsp_neighbors{};
@@ -1492,6 +1508,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         HSP_Test(pivot_index, hsp_domain, max_hsp_neighborhood_size, hsp_graph[pivot_iterator]);
                     }
                 }
+                tEnd_H = std::chrono::high_resolution_clock::now();
+                double time_H = std::chrono::duration_cast<std::chrono::duration<double>>(tEnd_H - tStart_H).count();
+                printf("    * Done computing HSP in %.3f seconds\n", time_H);
             }
 
             //  - statistics on hsp neighbors
@@ -1553,7 +1572,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::priority_queue<std::pair<dist_t, labeltype>> search_hnsw(const void *query_data, size_t k) const {
         std::priority_queue<std::pair<dist_t, labeltype>> result;
         if (cur_element_count == 0) return result;
-        bool collect_metrics = true;
+        bool const collect_metrics = false;
 
         //> Default Entry Point
         tableint currObj = enterpoint_node_;
@@ -1610,19 +1629,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         candidate_set.emplace(-dist, currObj);
         visited_array[currObj] = visited_array_tag;
 
-        //- STATISTICS--- RMOVE, NOT ATOMIC
-        // averageEntryPointDistance_ += lowerBound;
-        // std::vector<tableint> pivotsList{};
-        // getPivotsInLevel(1, pivotsList);
-        // dist_t closestPivotDistance = 10000;
-        // for (int it1 = 0; it1 < (int)pivotsList.size(); it1++) {
-        //     tableint const pivot_index = (tableint)pivotsList[it1];
-        //     dist_t distance1 = fstdistfunc_(query_data, getDataByInternalId(pivot_index), dist_func_param_);
-        //     if (distance1 < closestPivotDistance) {
-        //         closestPivotDistance = distance1;
-        //     }
-        // }
-        // averageClosestPivotDistance_ += closestPivotDistance;  // DISTANCE TO ENTRY POINT
+        //- STATISTICS--- NOT ATOMIC, BE CAREFUL
+        // if (collect_metrics) {
+        //     averageEntryPointDistance_ += lowerBound;
+        //}
 
         // - depth-first iteratation through the list of candidate points on bottom layer
         while (!candidate_set.empty()) {
@@ -1643,13 +1653,242 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 metric_distance_computations += size;
             }
 
-            // pre-fetch the information into cache...
+// #ifdef USE_SSE
+//             _mm_prefetch((char *)(visited_array + *(data + 1)), _MM_HINT_T0);
+//             _mm_prefetch((char *)(visited_array + *(data + 1) + 64), _MM_HINT_T0);
+//             _mm_prefetch(data_level0_memory_ + (*(data + 1)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+//             _mm_prefetch((char *)(data + 2), _MM_HINT_T0);
+// #endif
 
             // iterate through each neighbor
             for (size_t j = 1; j <= size; j++) {
                 int candidate_id = *(data + j);
 
+
                 // pre-fetch the information into cache...
+// #ifdef USE_SSE
+//                 _mm_prefetch((char *)(visited_array + *(data + j + 1)), _MM_HINT_T0);
+//                 _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + offsetData_,
+//                              _MM_HINT_T0);  ////////////
+// #endif
+
+                // check if the point has been visited already! (tabu search)
+                if (!(visited_array[candidate_id] == visited_array_tag)) {
+                    visited_array[candidate_id] = visited_array_tag;
+
+                    // compute distance to the object
+                    char *currObj1 = (getDataByInternalId(candidate_id));
+                    dist_t dist = fstdistfunc_(query_data, currObj1, dist_func_param_);
+
+                    if (top_candidates.size() < ef || lowerBound > dist) {
+                        candidate_set.emplace(-dist, candidate_id);
+
+// #ifdef USE_SSE
+//                         _mm_prefetch(data_level0_memory_ + candidate_set.top().second * size_data_per_element_ +
+//                                          offsetLevel0_,  ///////////
+//                                      _MM_HINT_T0);       ////////////////////////
+// #endif
+
+                        top_candidates.emplace(dist, candidate_id);
+                        if (top_candidates.size() > ef) top_candidates.pop();
+                        if (!top_candidates.empty()) lowerBound = top_candidates.top().first;
+                    }
+                }
+            }
+        }
+
+        // release the visisted list
+        visited_list_pool_->releaseVisitedList(vl);
+
+        // only keep the k closest points
+        while (top_candidates.size() > k) {
+            top_candidates.pop();
+        }
+        while (top_candidates.size() > 0) {
+            std::pair<dist_t, tableint> rez = top_candidates.top();
+            result.push(std::pair<dist_t, labeltype>(rez.first, getExternalLabel(rez.second)));
+            top_candidates.pop();
+        }
+        return result;
+    }
+
+
+
+    /**
+     *
+     * @brief APPROACH 2: BEAM SEARCH ON SECOND-TO-LAST LAYER FOR CLOSER ENTRY POINT
+     *
+     * @param query_data
+     * @param k
+     * @return std::priority_queue<std::pair<dist_t, labeltype>>
+     */
+    std::priority_queue<std::pair<dist_t, labeltype>> knn_approach2(const void *query_data, size_t k, int const m) const {
+        std::priority_queue<std::pair<dist_t, labeltype>> result;
+        if (cur_element_count == 0) return result;
+        bool const collect_metrics = false;
+
+        //> Default Entry Point
+        tableint currObj = enterpoint_node_;
+        dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
+
+        /*
+        =============================================
+        
+                Greedy Search Until Level 2
+
+        =============================================
+        */
+
+        //> Top-Down Greedy Search for Entry-Point
+        for (int level = maxlevel_; level > 1; level--) {
+            
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                unsigned int *data;
+
+                data = (unsigned int *)get_linklist(currObj, level);
+                int size = getListCount(data);
+                metric_hops++;
+                metric_distance_computations += size;
+
+                tableint *datal = (tableint *)(data + 1);
+                for (int i = 0; i < size; i++) {
+                    tableint cand = datal[i];
+
+                    if (cand < 0 || cand > max_elements_) {
+                        throw std::runtime_error("cand error");
+                    }
+                    dist_t d = fstdistfunc_(query_data, getDataByInternalId(cand), dist_func_param_);
+
+                    if (d < curdist) {
+                        curdist = d;
+                        currObj = cand;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        /*
+        =============================================
+        
+                Beam Search on Level 1
+
+        =============================================
+        */
+        size_t ef = (size_t) m;
+
+        // - initialize visited list for tabu search
+        VisitedList *vl1 = visited_list_pool_->getFreeVisitedList();
+        vl_type *visited_array1 = vl1->mass;
+        vl_type visited_array_tag1 = vl1->curV;
+
+        // - initialize lists
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
+            top_candidates;  // containing the closest visited nodes (to be size ef)
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
+            candidate_set;  // containing the list of nodes to visit
+
+        // - initialize with bottom layer graph entry point
+        dist_t lowerBound = curdist;
+        top_candidates.emplace(curdist, currObj);
+        candidate_set.emplace(-curdist, currObj);
+        visited_array1[currObj] = visited_array_tag1;
+
+        //  - small beam search on second-to-bottom layer
+        while (!candidate_set.empty()) {
+            std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+
+            // termination condition: no candidate points in top_candidates, top_candidates is full
+            if ((-current_node_pair.first) > lowerBound && (top_candidates.size() == ef)) {
+                break;
+            }
+            candidate_set.pop();
+
+            // gather neighbors of current node
+            tableint current_node_id = current_node_pair.second;
+            int *data = (int *)get_linklist(current_node_id,1);
+            size_t size = getListCount((linklistsizeint *)data);
+
+            // iterate through each neighbor
+            for (size_t j = 1; j <= size; j++) {
+                int candidate_id = *(data + j);
+
+                // check if the point has been visited already! (tabu search)
+                if (!(visited_array1[candidate_id] == visited_array_tag1)) {
+                    visited_array1[candidate_id] = visited_array_tag1;
+
+                    // compute distance to the object
+                    char *currObj1 = (getDataByInternalId(candidate_id));
+                    dist_t dist = fstdistfunc_(query_data, currObj1, dist_func_param_);
+
+                    if (top_candidates.size() < ef || lowerBound > dist) {
+                        candidate_set.emplace(-dist, candidate_id);
+                        top_candidates.emplace(dist, candidate_id);
+                        if (top_candidates.size() > ef) top_candidates.pop();
+                        if (!top_candidates.empty()) lowerBound = top_candidates.top().first;
+                    }
+                }
+            }
+        }
+
+        // release the visisted list
+        visited_list_pool_->releaseVisitedList(vl1);
+
+        /*
+        =============================================
+        
+                Beam Search on Level 0
+
+        =============================================
+        */
+        ef = std::max(ef_, k);
+
+        // - initialize visited list for tabu search
+        VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+        vl_type *visited_array = vl->mass;
+        vl_type visited_array_tag = vl->curV;
+
+        // - initialize candidate list with these m points
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates_copy = top_candidates;
+        candidate_set = std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>{};
+        while (top_candidates_copy.size() > 0) {
+            std::pair<dist_t, tableint> current_node_pair = top_candidates_copy.top();
+            candidate_set.emplace(-current_node_pair.first,current_node_pair.second);
+            top_candidates_copy.pop();
+            visited_array[current_node_pair.second] = visited_array_tag;
+
+            if (current_node_pair.first < lowerBound) lowerBound = current_node_pair.first;
+        }
+
+        // - STATISTICS--- NOT ATOMIC, BE CAREFUL-- only use with one thread
+        // if (collect_metrics) {
+        //     averageEntryPointDistance_ += lowerBound;
+        // }
+
+        // - depth-first iteratation through the list of candidate points on bottom layer
+        while (!candidate_set.empty()) {
+            std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+
+            // termination condition: no candidate points in top_candidates, top_candidates is full
+            if ((-current_node_pair.first) > lowerBound && (top_candidates.size() == ef)) {
+                break;
+            }
+            candidate_set.pop();
+
+            // gather neighbors of current node
+            tableint current_node_id = current_node_pair.second;
+            int *data = (int *)get_linklist0(current_node_id);
+            size_t size = getListCount((linklistsizeint *)data);
+            if (collect_metrics) {
+                metric_hops++;
+                metric_distance_computations += size;
+            }
+
+            // iterate through each neighbor
+            for (size_t j = 1; j <= size; j++) {
+                int candidate_id = *(data + j);
 
                 // check if the point has been visited already! (tabu search)
                 if (!(visited_array[candidate_id] == visited_array_tag)) {
@@ -1686,96 +1925,142 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     /**
      *
-     * @brief The Beam Search Algo by Chavez et al.
-     *
+     * @brief HSP TO ENCODE DIRECTION FOR GREEDY RESTARTS
      *
      * @param query_data
      * @param k
      * @return std::priority_queue<std::pair<dist_t, labeltype>>
      */
-    std::priority_queue<std::pair<dist_t, labeltype>> search_beam(const void *query_data, size_t k) const {
+    std::priority_queue<std::pair<dist_t, labeltype>> knn_approach3(const void *query_data, size_t k, int m) const {
+        
+        //  - initializations
         std::priority_queue<std::pair<dist_t, labeltype>> result;
         if (cur_element_count == 0) return result;
-        bool collect_metrics = true;
+        int const start_level = std::min(maxlevel_,2);
+        int const max_neighbors = maxM_;
+        // m = std::max((int) k, m);
 
-        // - initialize visited list for tabu search
-        VisitedList *vl = visited_list_pool_->getFreeVisitedList();
-        vl_type *visited_array = vl->mass;
-        vl_type visited_array_tag = vl->curV;
-
-        //  - initialize the knn and beam objects
+        //  - the knn we collect will be size m
+        //  - this is the size of our neighborhood for hsp
+        //  - all pivots on one layer are also pivots on layers below
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
-            top_candidates;  // containing the k closest points: max_queue- keep at k
-        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
-            candidate_set;  // containing the beam: min_queue
+                    top_candidates;  // positive distances: pop furthest points. size m
 
-        // - initialize the kNN with random points
-        size_t ef = std::max(ef_, k);
-        for (size_t i = 0; i < ef; i++) {
-            tableint random_node = (tableint)(rand() % cur_element_count);
-            dist_t d = fstdistfunc_(query_data, getDataByInternalId(random_node), dist_func_param_);
-            top_candidates.emplace(d, random_node);
-            if (top_candidates.size() > k) top_candidates.pop();  // delete the largest element
-        }
+        //>     TOP-DOWN
+        for (int level = start_level; level >= 0; level--) {
 
-        //  - repeat while result set improves
-        bool flag_changed = true;
-        while (flag_changed) {
-            dist_t prev_furthest = top_candidates.top().first;  // to measure improvement
+            //  - initialize the neighborhood for top layer
+            if (level == start_level) {
 
-            // - get the closest point in the top_candidates, as the last element (smallest)
+                //  - get all point in starting layer
+                std::vector<tableint> const& pivots_start_layer = pivot_index_vectors[level];
+                int const number_of_pivots = (int) pivots_start_layer.size();
+
+                //  - get set of random indices, no duplicates
+                std::unordered_set<int> rand_indices_set{};
+                while (rand_indices_set.size() < m) {
+                    int const rand_idx = rand() % (number_of_pivots - 1);
+                    rand_indices_set.insert(rand_idx);
+                }
+
+                //  - initialize the list with the random pivots
+                typename std::unordered_set<int>::iterator it1;
+                for (it1 = rand_indices_set.begin(); it1 != rand_indices_set.end(); it1++) {
+                    int const rand_idx = (*it1);
+                    tableint const pivot_index = pivots_start_layer[rand_idx];
+                    dist_t const distance = fstdistfunc_(query_data, getDataByInternalId(pivot_index), dist_func_param_);
+                    top_candidates.emplace(distance, pivot_index);
+                }
+            }
+
+            //  - get vector from priority queue, in a increasing order
+            std::vector<std::pair<dist_t,tableint>> starting_neighborhood{};
             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
-                top_candidates_copy = top_candidates;
-            while (top_candidates_copy.size() > 1) {
-                candidate_set.emplace(-top_candidates_copy.top().first, top_candidates_copy.top().second);
+                    top_candidates_copy = top_candidates;
+            int count = top_candidates_copy.size();
+            starting_neighborhood.resize(count);
+            while (top_candidates_copy.size() > 0) {
+                std::pair<dist_t, tableint> current_node_pair = top_candidates_copy.top();
+                count--;
+                starting_neighborhood[count] = current_node_pair;
                 top_candidates_copy.pop();
             }
-            // !!!! What if already visited?? Add all to beam! Not sure which ones are new
+            //  - we can assume this is a sorted list :)
 
-            // - insert this closest point into the beam
-            while (candidate_set.size() > 0) {
-                std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
-                candidate_set.pop();
-                tableint current_node_id = current_node_pair.second;
+            //  - hsp test by sorted list
+            std::vector<bool> hsp_chosen(starting_neighborhood.size(),false);
+            std::vector<std::pair<dist_t,tableint>> hsp_neighbors{};
+            for (int it1 = 0; it1 < starting_neighborhood.size(); it1++) {
+                if (hsp_chosen[it1] == true) continue;
+                hsp_chosen[it1] = true;
 
-                //  - tabu search check
-                if (!(visited_array[current_node_id] == visited_array_tag)) {
-                    visited_array[current_node_id] = visited_array_tag;
+                //  - add the new hsp neighbor
+                hsp_neighbors.push_back(starting_neighborhood[it1]);
+                dist_t distance_Q1 = starting_neighborhood[it1].first;
+                tableint index1 = starting_neighborhood[it1].second;
+                char *index1_data = getDataByInternalId(index1);
 
-                    //  - gather neighbors
-                    int *data = (int *)get_linklist0(current_node_id);
-                    size_t size = getListCount((linklistsizeint *)data);
-                    if (collect_metrics) {
-                        metric_hops++;
-                        metric_distance_computations += size;
-                    }
+                //  - find all points invalidated 
+                for (int it2 = it1+1; it2 < (int)starting_neighborhood.size(); it2++) {
+                    tableint const index2 = starting_neighborhood[it2].second;
+                    if (hsp_chosen[it2] == true || index2 == index1) continue;
+                    dist_t const distance_Q2 = starting_neighborhood[it2].first;
+                    dist_t const distance_12 = fstdistfunc_(index1_data, getDataByInternalId(index2), dist_func_param_);
 
-                    //  - iterate through nexighbors
-                    for (size_t j = 1; j <= size; j++) {
-                        int candidate_id = *(data + j);
-
-                        // check if the point has been visited already! (tabu search)
-                        if (!(visited_array[candidate_id] == visited_array_tag)) {
-                            visited_array[candidate_id] = visited_array_tag;
-                            dist_t dist = fstdistfunc_(query_data, getDataByInternalId(candidate_id), dist_func_param_);
-
-                            // if added to top k, then let's explore:
-                            if (dist < top_candidates.top().first || top_candidates.size() < k) {
-                                candidate_set.emplace(-dist, candidate_id);
-                                top_candidates.emplace(dist, candidate_id);           // add to list
-                                if (top_candidates.size() > k) top_candidates.pop();  // remove largest
-                            }
-                        }
+                    // if (distance_Q1 >= distance_Q2 || distance_12 >= distance_Q2) {
+                    if (distance_12 < distance_Q2) {
+                        hsp_chosen[it2] = true; 
                     }
                 }
             }
 
-            // check for improvement
-            if (prev_furthest >= top_candidates.top().first) flag_changed = false;
-        }
+            //  - initialize list for tabu search
+            VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+            vl_type *visited_array = vl->mass;
+            vl_type visited_array_tag = vl->curV;
 
-        // release the visisted list
-        visited_list_pool_->releaseVisitedList(vl);
+            //  - Use each hsp neighbor as a starting point
+            for (int it1 = 0; it1 < hsp_neighbors.size(); it1++) {
+                tableint currObj = hsp_neighbors[it1].second;
+                dist_t curdist = hsp_neighbors[it1].first;
+                if (visited_array[currObj] == visited_array_tag) continue;
+                visited_array[currObj] = visited_array_tag;
+
+                //  - perform greedy search: keep navigating until no closer neighbors
+                bool changed = true;
+                while (changed) {
+                    changed = false;
+
+                    //  - get the neighbors of the current node
+                    unsigned int *data = (unsigned int *)get_linklist_at_level(currObj, level);
+                    int const num_neighbors = (int) getListCount(data);
+                    tableint *datal = (tableint *)(data + 1);
+
+                    //  - iterate through each neighbor
+                    int neighbors_to_visit = std::min(max_neighbors,num_neighbors);
+                    for (int i = 0; i < neighbors_to_visit; i++) {
+                        tableint cand = datal[i];
+                        if (visited_array[cand] == visited_array_tag) continue;
+                        visited_array[cand] = visited_array_tag;
+                        dist_t distance = fstdistfunc_(query_data, getDataByInternalId(cand), dist_func_param_);
+
+                        //  - update current node if possible
+                        if (distance < curdist) {
+                            curdist = distance;
+                            currObj = cand;
+                            changed = true;
+                        }
+
+                        //  - update top neighbors if possible
+                        if (distance < top_candidates.top().first) {
+                            top_candidates.emplace(distance, cand);
+                            if (top_candidates.size() > 2*m) top_candidates.pop();
+                        }
+                    }
+                }
+            }
+            visited_list_pool_->releaseVisitedList(vl);
+        }
 
         // only keep the k closest points
         while (top_candidates.size() > k) {
@@ -1789,5 +2074,257 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return result;
     }
 
+    typedef std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> min_queue_tableint;
+
+
+    /**
+     *
+     * @brief MERGE HSP FOR GOOD ENTRIES FOR BEAM SEARCH
+     *
+     * @param query_data
+     * @param k
+     * @return std::priority_queue<std::pair<dist_t, labeltype>>
+     */
+    std::priority_queue<std::pair<dist_t, labeltype>> knn_approach4(const void *query_data, size_t k, int b) const {
+        
+        //  - initializations
+        std::priority_queue<std::pair<dist_t, labeltype>> result;
+        if (cur_element_count == 0) return result;
+        int const start_level = std::min(maxlevel_,2);
+        int const max_neighbors = maxM_;
+        int hsp_neighborhood_size = 2*b;
+
+        //  - the knn we collect will be size m
+        //  - this is the size of our neighborhood for hsp
+        //  - all pivots on one layer are also pivots on layers below
+        min_queue_tableint top_candidates;  // positive distances: pop furthest points. size m
+
+        //=============================================================================================
+        //
+        //                      Multi-Start Greedy Search with HSP Entry Points
+        //  
+        //=============================================================================================
+
+        //  - want the entry-points in the bottom layer
+        std::vector<std::pair<dist_t,tableint>> entry_points{};
+
+        //>     TOP-DOWN
+        for (int level = start_level; level >= 0; level--) {
+
+            //  - initialize the neighborhood for top layer
+            if (level == start_level) {
+
+                //  - get all point in starting layer
+                std::vector<tableint> const& pivots_start_layer = pivot_index_vectors[level];
+                int const number_of_pivots = (int) pivots_start_layer.size();
+
+                //  - get set of random indices, no duplicates
+                std::unordered_set<int> rand_indices_set{};
+                while (rand_indices_set.size() < hsp_neighborhood_size) {
+                    int const rand_idx = rand() % (number_of_pivots - 1);
+                    rand_indices_set.insert(rand_idx);
+                }
+
+                //  - initialize the list with the random pivots
+                typename std::unordered_set<int>::iterator it1;
+                for (it1 = rand_indices_set.begin(); it1 != rand_indices_set.end(); it1++) {
+                    int const rand_idx = (*it1);
+                    tableint const pivot_index = pivots_start_layer[rand_idx];
+                    dist_t const distance = fstdistfunc_(query_data, getDataByInternalId(pivot_index), dist_func_param_);
+                    top_candidates.emplace(distance, pivot_index);
+                }
+            }
+
+            //  - get vector from priority queue, in a increasing order
+            std::vector<std::pair<dist_t,tableint>> starting_neighborhood{};
+            min_queue_tableint top_candidates_copy = top_candidates;
+            int count = top_candidates_copy.size();
+            starting_neighborhood.resize(count);
+            while (top_candidates_copy.size() > 0) {
+                std::pair<dist_t, tableint> current_node_pair = top_candidates_copy.top();
+                count--;
+                starting_neighborhood[count] = current_node_pair;
+                top_candidates_copy.pop();
+            }
+            //  - we can assume this is a sorted list :)
+
+            //  - hsp test by sorted list
+            std::vector<bool> hsp_chosen(starting_neighborhood.size(),false);
+            std::vector<std::pair<dist_t,tableint>> hsp_neighbors{};
+            for (int it1 = 0; it1 < starting_neighborhood.size(); it1++) {
+                if (hsp_chosen[it1] == true) continue;
+                hsp_chosen[it1] = true;
+
+                //  - add the new hsp neighbor
+                hsp_neighbors.push_back(starting_neighborhood[it1]);
+                dist_t distance_Q1 = starting_neighborhood[it1].first;
+                tableint index1 = starting_neighborhood[it1].second;
+                char *index1_data = getDataByInternalId(index1);
+
+                //  - find all points invalidated 
+                for (int it2 = it1+1; it2 < (int)starting_neighborhood.size(); it2++) {
+                    tableint const index2 = starting_neighborhood[it2].second;
+                    if (hsp_chosen[it2] == true || index2 == index1) continue;
+                    dist_t const distance_Q2 = starting_neighborhood[it2].first;
+                    dist_t const distance_12 = fstdistfunc_(index1_data, getDataByInternalId(index2), dist_func_param_);
+
+                    // if (distance_Q1 >= distance_Q2 || distance_12 >= distance_Q2) {
+                    if (distance_12 < distance_Q2) {
+                        hsp_chosen[it2] = true; 
+                    }
+                }
+            }
+
+            // break at bottom level for beam search
+            if (level == 0) {
+                entry_points = hsp_neighbors;
+                break;
+            }
+
+            //  - initialize list for tabu search
+            VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+            vl_type *visited_array = vl->mass;
+            vl_type visited_array_tag = vl->curV;
+
+            //  - Use each hsp neighbor as a starting point
+            for (int it1 = 0; it1 < hsp_neighbors.size(); it1++) {
+                tableint currObj = hsp_neighbors[it1].second;
+                dist_t curdist = hsp_neighbors[it1].first;
+                if (visited_array[currObj] == visited_array_tag) continue;
+                visited_array[currObj] = visited_array_tag;
+
+                //  - perform greedy search: keep navigating until no closer neighbors
+                bool changed = true;
+                while (changed) {
+                    changed = false;
+
+                    //  - get the neighbors of the current node
+                    unsigned int *data = (unsigned int *)get_linklist_at_level(currObj, level);
+                    int const num_neighbors = (int) getListCount(data);
+                    tableint *datal = (tableint *)(data + 1);
+
+                    //  - iterate through each neighbor
+                    int neighbors_to_visit = std::min(max_neighbors,num_neighbors);
+                    for (int i = 0; i < neighbors_to_visit; i++) {
+                        tableint cand = datal[i];
+                        if (visited_array[cand] == visited_array_tag) continue;
+                        visited_array[cand] = visited_array_tag;
+                        dist_t distance = fstdistfunc_(query_data, getDataByInternalId(cand), dist_func_param_);
+
+                        //  - update current node if possible
+                        if (distance < curdist) {
+                            curdist = distance;
+                            currObj = cand;
+                            changed = true;
+                        }
+
+                        //  - update top neighbors if possible
+                        if (distance < top_candidates.top().first) {
+                            top_candidates.emplace(distance, cand);
+                            if (top_candidates.size() > hsp_neighborhood_size) top_candidates.pop();
+                        }
+                    }
+                }
+            }
+            visited_list_pool_->releaseVisitedList(vl);
+        }
+
+        //=============================================================================================
+        //
+        //                              Beam Search on Bottom Level
+        //  
+        //=============================================================================================
+        
+        //> Initialized Tabu Search
+        //  - elements that have been encountered
+        VisitedList *vl1 = visited_list_pool_->getFreeVisitedList();
+        vl_type *visited_array = vl1->mass;
+        vl_type visited_array_tag = vl1->curV;
+        //  - elements that have had their neighbors explores
+        VisitedList *vl2 = visited_list_pool_->getFreeVisitedList();
+        vl_type *explored_array = vl2->mass;
+        vl_type explored_array_tag = vl2->curV;
+
+        // res: the knn priority queue
+        min_queue_tableint res = top_candidates;    // positive distances: pop furthest first
+        while (res.size() > k) res.pop();
+
+        // beam: initialize with the entry points from hsp
+        int const max_beam_size = 8; // FIXED (int) b;
+        min_queue_tableint beam;                    // negative distances: pop closest first
+        for (int it1 = 0; it1 < (int) entry_points.size(); it1++) {
+            beam.emplace(-entry_points[it1].first, entry_points[it1].second);
+        }
+
+        // iterate through the beam
+        while (beam.size() > 0) {
+
+            // first node
+            std::pair<dist_t, tableint> current_node_pair = beam.top();
+            tableint current_node_id = current_node_pair.second;
+            beam.pop();
+
+            // skip if already explored
+            if (explored_array[current_node_id] == explored_array_tag) continue;
+            explored_array[current_node_id] = explored_array_tag;
+            visited_array[current_node_id] = visited_array_tag;
+
+            // gather neighbors of current node
+            int *data = (int *)get_linklist0(current_node_id);
+            size_t num_neighbors = getListCount((linklistsizeint *)data);
+
+            // iterate through each neighbor
+            for (size_t j = 1; j <= num_neighbors; j++) {
+                int neighbor_id = *(data + j);
+
+                //  - skip if already visisted
+                if (visited_array[neighbor_id] == visited_array_tag) continue;
+                visited_array[neighbor_id] = visited_array_tag;
+                
+                // compute distance to the object
+                char *neighborObj = (getDataByInternalId(neighbor_id));
+                dist_t distance = fstdistfunc_(query_data, neighborObj, dist_func_param_);
+
+                // if this can be added
+                if (res.size() < k || distance < res.top().first) {
+                    res.emplace(distance, neighbor_id);
+                    if (res.size() > k) res.pop();
+                    beam.emplace(-distance, neighbor_id);
+                }
+            }
+
+            // resize the beam
+            if (beam.size() > max_beam_size) {
+                min_queue_tableint beam_temp;
+                //  - dump all of beam into max queue
+                while (beam.size() > 0) {
+                    beam_temp.emplace(-beam.top().first, beam.top().second);
+                    beam.pop();
+                }
+                //  - cut length of max queue
+                while (beam_temp.size() > max_beam_size) beam_temp.pop();
+                //  - return to the beam
+                while (beam_temp.size() > 0) {
+                    beam.emplace(-beam_temp.top().first, beam_temp.top().second);
+                    beam_temp.pop();
+                }
+            }
+        }
+
+        // release the visisted list
+        visited_list_pool_->releaseVisitedList(vl1);
+        visited_list_pool_->releaseVisitedList(vl2);
+
+        // only keep the k closest points
+        while (res.size() > k) {
+            res.pop();
+        }
+        while (res.size() > 0) {
+            std::pair<dist_t, tableint> rez = res.top();
+            result.push(std::pair<dist_t, labeltype>(rez.first, getExternalLabel(rez.second)));
+            res.pop();
+        }
+        return result;
+    }
 };
 }  // namespace hnswlib

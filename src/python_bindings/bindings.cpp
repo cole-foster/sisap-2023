@@ -228,6 +228,12 @@ class Index {
         printf(
             "Warning: This modified version does not automatically load the dataset: please call load_dataset() before "
             "searching\n");
+
+        // add pivots in each layer
+        appr_alg->pivot_index_vectors.resize(appr_alg->maxlevel_ + 1);
+        for (int level = 1; level <= appr_alg->maxlevel_; level++) {
+            appr_alg->getPivotsInLevel(level, appr_alg->pivot_index_vectors[level]);
+        }
     }
 
     void loadDataset(py::buffer& input_buffer) {
@@ -314,6 +320,12 @@ class Index {
                 });
             }
             cur_l += rows;
+        }
+
+        // add pivots in each layer
+        appr_alg->pivot_index_vectors.resize(appr_alg->maxlevel_ + 1);
+        for (int level = 1; level <= appr_alg->maxlevel_; level++) {
+            appr_alg->getPivotsInLevel(level, appr_alg->pivot_index_vectors[level]);
         }
     }
 
@@ -693,42 +705,12 @@ class Index {
 
     // MODIFIED: PIVOT SELECTION AND HSP GRAPH CONSTRUCTION
     void monotonic_hierarchy() {
-
-        // printf("Lets print some neighbors before...\n");
-        // std::vector<hnswlib::tableint> pivots_list{};
-        // appr_alg->getPivotsInLevel(1, pivots_list);
-        // for (int it1 = 0; it1 < 10; it1++) {
-        //     hnswlib::tableint pivot_index = pivots_list[it1];
-        //     std::vector<hnswlib::tableint> neighbors{};
-        //     appr_alg->getNeighborsInLevel(1, pivot_index, neighbors);
-        //     printf("  - %d: %u --> %d: {", it1, (unsigned int)pivot_index, (int)neighbors.size());
-        //     for (int it2 = 0; it2 < (int)neighbors.size(); it2++) {
-        //         printf("%u,", neighbors[it2]);
-        //     }
-        //     printf("}\n");
-        // }
-
-        // monotonic hierarchy construction
         appr_alg->createMonotonicHierarchy();
-
-        // printf("Lets print some neighbors after...\n");
-        // for (int it1 = 0; it1 < 10; it1++) {
-        //     hnswlib::tableint pivot_index = pivots_list[it1];
-        //     std::vector<hnswlib::tableint> neighbors{};
-        //     appr_alg->getNeighborsInLevel(1, pivot_index, neighbors);
-        //     printf("  - %d: %u --> %d: {", it1, (unsigned int)pivot_index, (int)neighbors.size());
-        //     for (int it2 = 0; it2 < (int)neighbors.size(); it2++) {
-        //         printf("%u,", neighbors[it2]);
-        //     }
-        //     printf("}\n");
-        // }
-
         return;
     }
 
     void print_hierarchy() { appr_alg->printHierarchy(); }
 
-    // calls hnswalg::search_hnsw();
     py::object knnQuery_hnsw(py::object input, size_t k = 1, int num_threads = -1) {
         if (!flag_data_loaded_) {
             printf("Error: Data Pointer Not Let Loaded");
@@ -741,11 +723,7 @@ class Index {
         dist_t* data_numpy_d;
         size_t rows, features;
 
-        // appr_alg->averageClosestPivotDistance_ = 0;
-        // appr_alg->averageEntryPointDistance_ = 0;
-
         if (num_threads <= 0) num_threads = num_threads_default;
-        // num_threads = 1;  // TEMP:
         {
             py::gil_scoped_release l;
             get_input_array_shapes(buffer, &rows, &features);
@@ -797,9 +775,6 @@ class Index {
         py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
         py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
 
-        // printf("Ave Distance to Closest Pivot: %.4f\n", appr_alg->averageClosestPivotDistance_ / (double)rows);
-        // printf("Ave Distance to Entry: %.4f\n", appr_alg->averageEntryPointDistance_ / (double)rows);
-
         return py::make_tuple(
             py::array_t<hnswlib::labeltype>({rows, k},  // shape
                                             {k * sizeof(hnswlib::labeltype),
@@ -812,12 +787,13 @@ class Index {
                                 free_when_done_d));
     }
 
-    // calls hnswalg::search_beam();
-    py::object knnQuery_beam(py::object input, size_t k = 1, int num_threads = -1) {
+
+    py::object knn_approach2(py::object input, size_t k = 1, int m = 1, int num_threads = -1) {
         if (!flag_data_loaded_) {
             printf("Error: Data Pointer Not Let Loaded");
             return py::make_tuple();
         }
+
         py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
         auto buffer = items.request();
         hnswlib::labeltype* data_numpy_l;
@@ -833,7 +809,6 @@ class Index {
             if (rows <= num_threads * 4) {
                 num_threads = 1;
             }
-            appr_alg->metric_distance_computations = 0;
 
             data_numpy_l = new hnswlib::labeltype[rows * k];
             data_numpy_d = new dist_t[rows * k];
@@ -841,7 +816,7 @@ class Index {
             if (normalize == false) {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->search_beam((void*)items.data(row), k);
+                        appr_alg->knn_approach2((void*)items.data(row), k, m);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
@@ -861,7 +836,7 @@ class Index {
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
 
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->search_beam((void*)(norm_array.data() + start_idx), k);
+                        appr_alg->knn_approach2((void*)(norm_array.data() + start_idx), k, m);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
@@ -877,7 +852,162 @@ class Index {
         py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
         py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
 
-        printf("Total Distances: %llu\n", (unsigned long long int)appr_alg->metric_distance_computations);
+        return py::make_tuple(
+            py::array_t<hnswlib::labeltype>({rows, k},  // shape
+                                            {k * sizeof(hnswlib::labeltype),
+                                             sizeof(hnswlib::labeltype)},  // C-style contiguous strides for each index
+                                            data_numpy_l,                  // the data pointer
+                                            free_when_done_l),
+            py::array_t<dist_t>({rows, k},                             // shape
+                                {k * sizeof(dist_t), sizeof(dist_t)},  // C-style contiguous strides for each index
+                                data_numpy_d,                          // the data pointer
+                                free_when_done_d));
+    }
+
+    py::object knn_approach3(py::object input, size_t k = 1, int m = 1, int num_threads = -1) {
+        if (!flag_data_loaded_) {
+            printf("Error: Data Pointer Not Let Loaded");
+            return py::make_tuple();
+        }
+
+        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
+        auto buffer = items.request();
+        hnswlib::labeltype* data_numpy_l;
+        dist_t* data_numpy_d;
+        size_t rows, features;
+
+        // appr_alg->averageEntryPointDistance_ = 0;
+        if (num_threads <= 0) num_threads = num_threads_default;
+        {
+            py::gil_scoped_release l;
+            get_input_array_shapes(buffer, &rows, &features);
+
+            // avoid using threads when the number of searches is small:
+            if (rows <= num_threads * 4) {
+                num_threads = 1;
+            }
+
+            data_numpy_l = new hnswlib::labeltype[rows * k];
+            data_numpy_d = new dist_t[rows * k];
+
+            if (normalize == false) {
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
+                        appr_alg->knn_approach3((void*)items.data(row), k, m);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                });
+            } else {
+                std::vector<float> norm_array(num_threads * features);
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                    float* data = (float*)items.data(row);
+
+                    size_t start_idx = threadId * dim;
+                    normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
+
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
+                        appr_alg->knn_approach3((void*)(norm_array.data() + start_idx), k, m);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                });
+            }
+        }
+        py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
+        py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
+
+        return py::make_tuple(
+            py::array_t<hnswlib::labeltype>({rows, k},  // shape
+                                            {k * sizeof(hnswlib::labeltype),
+                                             sizeof(hnswlib::labeltype)},  // C-style contiguous strides for each index
+                                            data_numpy_l,                  // the data pointer
+                                            free_when_done_l),
+            py::array_t<dist_t>({rows, k},                             // shape
+                                {k * sizeof(dist_t), sizeof(dist_t)},  // C-style contiguous strides for each index
+                                data_numpy_d,                          // the data pointer
+                                free_when_done_d));
+    }
+
+
+
+
+    py::object knn_approach4(py::object input, size_t k = 1, int m = 1, int num_threads = -1) {
+        if (!flag_data_loaded_) {
+            printf("Error: Data Pointer Not Let Loaded");
+            return py::make_tuple();
+        }
+
+        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
+        auto buffer = items.request();
+        hnswlib::labeltype* data_numpy_l;
+        dist_t* data_numpy_d;
+        size_t rows, features;
+
+        // appr_alg->averageEntryPointDistance_ = 0;
+        if (num_threads <= 0) num_threads = num_threads_default;
+        {
+            py::gil_scoped_release l;
+            get_input_array_shapes(buffer, &rows, &features);
+
+            // avoid using threads when the number of searches is small:
+            if (rows <= num_threads * 4) {
+                num_threads = 1;
+            }
+
+            data_numpy_l = new hnswlib::labeltype[rows * k];
+            data_numpy_d = new dist_t[rows * k];
+
+            if (normalize == false) {
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
+                        appr_alg->knn_approach4((void*)items.data(row), k, m);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                });
+            } else {
+                std::vector<float> norm_array(num_threads * features);
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                    float* data = (float*)items.data(row);
+
+                    size_t start_idx = threadId * dim;
+                    normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
+
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
+                        appr_alg->knn_approach4((void*)(norm_array.data() + start_idx), k, m);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                });
+            }
+        }
+        py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
+        py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
 
         return py::make_tuple(
             py::array_t<hnswlib::labeltype>({rows, k},  // shape
@@ -1118,7 +1248,12 @@ PYBIND11_PLUGIN(hnswlib) {
         .def("print_hierarchy", &Index<float>::print_hierarchy)
         .def("monotonic_hierarchy", &Index<float>::monotonic_hierarchy)
         .def("knn_hnsw", &Index<float>::knnQuery_hnsw, py::arg("data"), py::arg("k") = 1, py::arg("num_threads") = -1)
-        .def("knn_beam", &Index<float>::knnQuery_beam, py::arg("data"), py::arg("k") = 1, py::arg("num_threads") = -1);
+        .def("knn_approach2", &Index<float>::knn_approach2, py::arg("data"), py::arg("k") = 1, py::arg("m") = 1,
+             py::arg("num_threads") = -1)
+        .def("knn_approach3", &Index<float>::knn_approach3, py::arg("data"), py::arg("k") = 1, py::arg("m") = 1,
+             py::arg("num_threads") = -1)
+        .def("knn_approach4", &Index<float>::knn_approach4, py::arg("data"), py::arg("k") = 1, py::arg("m") = 1,
+             py::arg("num_threads") = -1);
 
     // The Brute Force Bindings
     py::class_<BFIndex<float>>(m, "BFIndex")
@@ -1137,14 +1272,21 @@ PYBIND11_PLUGIN(hnswlib) {
     return m.ptr();
 }
 
-// df
 
-// dg
-// s
-// s
-// s
-// s
-// s
-// s
+// dfd
+// d
+// ddf
+// d,,
 
 // s
+// s
+
+// s
+// ss
+
+// d sto
+// key_tomjiooo
+// d,
+// d
+// d
+// d

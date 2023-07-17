@@ -52,7 +52,7 @@ def store_results(dst, algo, kind, D, I, buildtime, querytime, params, size):
 
 
 '''
-method = "HSP-HNSW"
+method = "HNSW-MOD"
 def run(kind, key, size, M, ef_construction):
     print(f"Running {method} on {kind}-{size}")
     index_identifier = f"{method}-M-{M}-EFC-{ef_construction}"
@@ -113,11 +113,11 @@ def run(kind, key, size, M, ef_construction):
         index.save_index(index_path_name)
         print(f"Saved Index To: {index_path_name}")
     index.print_hierarchy()
-
-    # search with the normal index
-    ef_vec = [10] #, 20, 30, 50, 70, 100, 140, 190, 250]
+    
+    # approach 1 with normal hnsw index: normal hnsw search
+    ef_vec = [10, 20, 30, 50, 70, 100, 140, 190, 250, 320, 400, 500, 650, 800, 1000]
     for ef in ef_vec:
-        print(f"Starting search on {queries.shape} with ef={ef}")
+        print(f"Starting Approach 1 Search onwith ef={ef}")
         start = time.time()
         index.set_ef(ef)  # ef should always be > k
         labels, distances = index.knn_hnsw(queries, k=10)
@@ -125,19 +125,49 @@ def run(kind, key, size, M, ef_construction):
         print(f"Done searching in {elapsed_search}s.")
 
         # save the results
-        identifier_modified = f"{index_identifier}-original"
+        identifier_modified = f"{index_identifier}-approach1"
         labels = labels + 1 # FAISS is 0-indexed, groundtruth is 1-indexed
         identifier = f"index=({identifier_modified}),query=(ef={ef})"
         store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), identifier_modified, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
 
+    # approach 3 with normal hnsw index: greedy traversal by hsp on each layer
+    m_vec = [4, 8, 12, 16, 20, 24, 28, 32, 10, 20, 30, 40, 60, 80, 100, 120, 150] 
+    for m in m_vec:
+        print(f"Starting Approach 3 Search on with m={m}")
+        start = time.time()
+        labels, distances = index.knn_approach3(queries, k=10, m=m)
+        elapsed_search = time.time() - start
+        print(f"Done searching in {elapsed_search}s.")
 
-    # perform our thing I guess
+        # save the results
+        identifier_modified = f"{index_identifier}-approach3"
+        labels = labels + 1 # FAISS is 0-indexed, groundtruth is 1-indexed
+        identifier = f"index=({identifier_modified}),query=(m={m})"
+        store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), identifier_modified, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
+
+    # approach 4 with normal hnsw index
+    b_vec = [2, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48] 
+    for b in b_vec:
+        print(f"Starting Approach 4 Search with b={b}")
+        #index.set_ef(ef)  # ef should always be > k
+        start = time.time()
+        labels, distances = index.knn_approach4(queries, k=10, m=b)
+        elapsed_search = time.time() - start
+        print(f"Done searching in {elapsed_search}s.")
+
+        # save the results
+        identifier_modified = f"{index_identifier}-approach4"
+        labels = labels + 1 # FAISS is 0-indexed, groundtruth is 1-indexed
+        identifier = f"index=({identifier_modified}),query=(b={b})"
+        store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), identifier_modified, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
+
+    # Create an approximately monotonic hierarchy
+    # Build an approximate hsp on each layer (besides bottom)
     index.monotonic_hierarchy()
 
-    # search with the normal index
-    ef_vec = [10] #, 20, 30, 50, 70, 100, 140, 190, 250]
+    # approach 1 with normal hnsw index: normal hnsw search
     for ef in ef_vec:
-        print(f"Starting search on {queries.shape} with ef={ef}")
+        print(f"Starting Approach 1 Search with ef={ef}")
         start = time.time()
         index.set_ef(ef)  # ef should always be > k
         labels, distances = index.knn_hnsw(queries, k=10)
@@ -145,10 +175,40 @@ def run(kind, key, size, M, ef_construction):
         print(f"Done searching in {elapsed_search}s.")
 
         # save the results
-        identifier_modified = f"{index_identifier}-hsp"
+        identifier_modified = f"{index_identifier}-hsp-approach1"
         labels = labels + 1 # FAISS is 0-indexed, groundtruth is 1-indexed
         identifier = f"index=({identifier_modified}),query=(ef={ef})"
         store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), identifier_modified, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
+
+    # approach 3 with normal hnsw index: greedy traversal by hsp on each layer
+    for m in m_vec:
+        print(f"Starting Approach 3 Search with m={m}")
+        start = time.time()
+        labels, distances = index.knn_approach3(queries, k=10, m=m)
+        elapsed_search = time.time() - start
+        print(f"Done searching in {elapsed_search}s.")
+
+        # save the results
+        identifier_modified = f"{index_identifier}-hsp-approach3"
+        labels = labels + 1 # FAISS is 0-indexed, groundtruth is 1-indexed
+        identifier = f"index=({identifier_modified}),query=(m={m})"
+        store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), identifier_modified, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
+
+    # approach 4 with normal hnsw index
+    for b in b_vec:
+        print(f"Starting Approach 4 Search with b={b}")
+        #index.set_ef(ef)  # ef should always be > k
+        start = time.time()
+        labels, distances = index.knn_approach4(queries, k=10, m=b)
+        elapsed_search = time.time() - start
+        print(f"Done searching in {elapsed_search}s.")
+
+        # save the results
+        identifier_modified = f"{index_identifier}-hsp-approach4"
+        labels = labels + 1 # FAISS is 0-indexed, groundtruth is 1-indexed
+        identifier = f"index=({identifier_modified}),query=(b={b})"
+        store_results(os.path.join("result/", kind, size, f"{identifier}.h5"), identifier_modified, kind, distances, labels, elapsed_build, elapsed_search, identifier, size)
+
 
 
 if __name__ == "__main__":
@@ -161,12 +221,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--M",
         type=int,
-        default=10,
+        default=20,
     )
     parser.add_argument(
         "--EF",
         type=int,
-        default=100,
+        default=400,
     )
     args = parser.parse_args()
     assert args.size in ["100K", "300K", "10M", "30M", "100M"]
