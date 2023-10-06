@@ -9,11 +9,13 @@ implementation of the Hierarchical Navigable Small World (HNSW) index.
 To support a continuous (non-batched) construction for large datasets, this submission features a modification to the 
 memory structure of the index. Unnecessary functionality is removed to optimize search-time efficiency. 
 
-## Setup
+## Setup and Use
 The *hnswlib* library is written in C++ and uses PyBind11 for Python bindings. This code was tested using Python 3.8 
 and Anaconda. See the [Github Workflow](https://github.com/cole-foster/sisap-2023/blob/main/.github/workflows/ci.yml)
 for an example installation of this setup.
 
-Index construction and evaluation is shown in `search/search.py`.
+Index construction and search is shown in `search/search.py`.
+
+Evaluation is done by the [eval submodule](https://github.com/sisap-challenges/sisap23-laion-challenge-evaluation.git).
 
 
