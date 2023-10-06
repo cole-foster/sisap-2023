@@ -52,7 +52,7 @@ jobs:
         shell: bash -el {0}
         run: |
           conda activate hsp
-          python3 search/sisap-script.py
+          python3 search/search.py
           python3 eval/eval.py
           python3 eval/plot.py res.csv --size 300K
       - uses: actions/upload-artifact@v3
