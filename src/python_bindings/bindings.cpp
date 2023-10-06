@@ -133,18 +133,6 @@ inline std::vector<size_t> get_input_ids_and_check_shapes(const py::object& ids_
     return ids;
 }
 
-/*
-====================================================================================================================
-|
-|
-|
-                    HNSW BINDING CLASS
-|
-|
-|
-====================================================================================================================
-*/
-
 template <typename dist_t, typename data_t = float>
 class Index {
    public:
@@ -163,7 +151,7 @@ class Index {
     hnswlib::HierarchicalNSW<dist_t>* appr_alg;
     hnswlib::SpaceInterface<float>* l2space;
 
-    // MODIFIED: FOR THE PYTHON POINTER
+    // NEW: ADDED FOR ENSURING DATA IS LOADED TO HNSW BEFORE SEARCH
     bool flag_data_loaded_ = false;
 
     Index(const std::string& space_name, const int dim) : space_name(space_name), dim(dim) {
@@ -189,7 +177,6 @@ class Index {
     ~Index() {
         delete l2space;
         if (appr_alg) delete appr_alg;
-        // if (is_dp) free(dataPointerTest_);
     }
 
     void init_new_index(size_t maxElements, size_t M, size_t efConstruction, size_t random_seed,
@@ -225,30 +212,20 @@ class Index {
             new hnswlib::HierarchicalNSW<dist_t>(l2space, path_to_index, false, max_elements, allow_replace_deleted);
         cur_l = appr_alg->cur_element_count;
         index_inited = true;
-        printf(
-            "Warning: This modified version does not automatically load the dataset: please call load_dataset() before "
-            "searching\n");
 
-        // add pivots in each layer
-        appr_alg->pivot_index_vectors.resize(appr_alg->maxlevel_ + 1);
-        for (int level = 1; level <= appr_alg->maxlevel_; level++) {
-            appr_alg->getPivotsInLevel(level, appr_alg->pivot_index_vectors[level]);
-        }
+        // NEW: MUST LOAD DATA
+        printf("WARNING (NEW): MUST LOAD DATA, CALL load_data()\n");
     }
 
-    void loadDataset(py::buffer& input_buffer) {
-        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input_buffer);
+    // NEW: SETTING DATA POINTER WITH NUMPY ARRAY POINTER
+    void loadData(py::object& input) {
+        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
         auto buffer = items.request();
         size_t rows, features;
         get_input_array_shapes(buffer, &rows, &features);
         if (features != dim) throw std::runtime_error("Wrong dimensionality of the vectors");
-        if (rows != appr_alg->cur_element_count) throw std::runtime_error("Data Length is Incorrect");
-
-        // add the data pointer to index, without duplicating memory
         appr_alg->data_pointer_ = static_cast<char*>(buffer.ptr);
         flag_data_loaded_ = true;
-
-        return;
     }
 
     void normalize_vector(float* data, float* norm_array) {
@@ -258,36 +235,27 @@ class Index {
         for (int i = 0; i < dim; i++) norm_array[i] = data[i] * norm;
     }
 
-    /**
-     * @brief Pass the Data Buffer from NP array- data_array.data
-     *
-     * @param buffer
-     * @param ids_
-     * @param num_threads
-     * @param replace_deleted
-     */
-    void addItems(py::buffer& input_buffer, py::object ids_ = py::none(), int num_threads = -1,
-                  bool replace_deleted = false) {
-        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input_buffer);
+    void addItems(py::object input, py::object ids_ = py::none(), int num_threads = -1, bool replace_deleted = false) {
+        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
         auto buffer = items.request();
+        if (num_threads <= 0) num_threads = num_threads_default;
         size_t rows, features;
         get_input_array_shapes(buffer, &rows, &features);
         if (features != dim) throw std::runtime_error("Wrong dimensionality of the vectors");
 
-        // add the data pointer to index, without duplicating memory
+        // NEW: SET DATA POINTER OF HNSW WITH NUMPY ARRAY POINTER
         appr_alg->data_pointer_ = static_cast<char*>(buffer.ptr);
         flag_data_loaded_ = true;
 
         // avoid using threads when the number of additions is small:
-        if (num_threads <= 0) num_threads = num_threads_default;
         if (rows <= num_threads * 4) {
             num_threads = 1;
         }
+
         std::vector<size_t> ids = get_input_ids_and_check_shapes(ids_, rows);
+
         {
             int start = 0;
-
-            // add one point without parallelization
             if (!ep_added) {
                 size_t id = ids.size() ? ids.at(0) : (cur_l);
                 float* vector_data = (float*)items.data(0);
@@ -301,7 +269,6 @@ class Index {
                 ep_added = true;
             }
 
-            // add rest in parallel
             py::gil_scoped_release l;
             if (normalize == false) {
                 ParallelFor(start, rows, num_threads, [&](size_t row, size_t threadId) {
@@ -320,12 +287,6 @@ class Index {
                 });
             }
             cur_l += rows;
-        }
-
-        // add pivots in each layer
-        appr_alg->pivot_index_vectors.resize(appr_alg->maxlevel_ + 1);
-        for (int level = 1; level <= appr_alg->maxlevel_; level++) {
-            appr_alg->getPivotsInLevel(level, appr_alg->pivot_index_vectors[level]);
         }
     }
 
@@ -604,16 +565,14 @@ class Index {
 
     py::object knnQuery_return_numpy(py::object input, size_t k = 1, int num_threads = -1,
                                      const std::function<bool(hnswlib::labeltype)>& filter = nullptr) {
-        if (!flag_data_loaded_) {
-            printf("Error: Data Pointer Not Let Loaded");
-            return py::make_tuple();
-        }
-
         py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
         auto buffer = items.request();
         hnswlib::labeltype* data_numpy_l;
         dist_t* data_numpy_d;
         size_t rows, features;
+
+        // NEW: ENSURE DATA IS LOADED BEFORE SEARCHING
+        if (!flag_data_loaded_) throw std::runtime_error("ERROR: (NEW) DATA NOT LOADED BEFORE SEARCH");
 
         if (num_threads <= 0) num_threads = num_threads_default;
 
@@ -633,8 +592,6 @@ class Index {
             // num_threads=1
             CustomFilterFunctor idFilter(filter);
             CustomFilterFunctor* p_idFilter = filter ? &idFilter : nullptr;
-
-            // grrrrr issues!
 
             if (normalize == false) {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
@@ -697,342 +654,35 @@ class Index {
 
     size_t getCurrentCount() const { return appr_alg->cur_element_count; }
 
-    /**
-     *
-     *      ALL THE MODIFICATIONS
-     *
-     */
-
-    // MODIFIED: PIVOT SELECTION AND HSP GRAPH CONSTRUCTION
-    void monotonic_hierarchy() {
-        appr_alg->createMonotonicHierarchy();
+    // begin some modificiations
+    void mod_preset_index(std::vector<int>& element_levels) const {
+        appr_alg->preset_index(element_levels);
         return;
     }
 
-    void print_hierarchy() { appr_alg->printHierarchy(); }
+    hnswlib::labeltype mod_get_entrypoint() { return (hnswlib::labeltype)appr_alg->enterpoint_node_; }
 
-    py::object knnQuery_hnsw(py::object input, size_t k = 1, int num_threads = -1) {
-        if (!flag_data_loaded_) {
-            printf("Error: Data Pointer Not Let Loaded");
-            return py::make_tuple();
-        }
-
-        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
-        auto buffer = items.request();
-        hnswlib::labeltype* data_numpy_l;
-        dist_t* data_numpy_d;
-        size_t rows, features;
-
-        if (num_threads <= 0) num_threads = num_threads_default;
-        {
-            py::gil_scoped_release l;
-            get_input_array_shapes(buffer, &rows, &features);
-
-            // avoid using threads when the number of searches is small:
-            if (rows <= num_threads * 4) {
-                num_threads = 1;
-            }
-
-            data_numpy_l = new hnswlib::labeltype[rows * k];
-            data_numpy_d = new dist_t[rows * k];
-
-            if (normalize == false) {
-                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->search_hnsw((void*)items.data(row), k);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
-                        auto& result_tuple = result.top();
-                        data_numpy_d[row * k + i] = result_tuple.first;
-                        data_numpy_l[row * k + i] = result_tuple.second;
-                        result.pop();
-                    }
-                });
-            } else {
-                std::vector<float> norm_array(num_threads * features);
-                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
-                    float* data = (float*)items.data(row);
-
-                    size_t start_idx = threadId * dim;
-                    normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
-
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->search_hnsw((void*)(norm_array.data() + start_idx), k);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
-                        auto& result_tuple = result.top();
-                        data_numpy_d[row * k + i] = result_tuple.first;
-                        data_numpy_l[row * k + i] = result_tuple.second;
-                        result.pop();
-                    }
-                });
-            }
-        }
-        py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
-        py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
-
-        return py::make_tuple(
-            py::array_t<hnswlib::labeltype>({rows, k},  // shape
-                                            {k * sizeof(hnswlib::labeltype),
-                                             sizeof(hnswlib::labeltype)},  // C-style contiguous strides for each index
-                                            data_numpy_l,                  // the data pointer
-                                            free_when_done_l),
-            py::array_t<dist_t>({rows, k},                             // shape
-                                {k * sizeof(dist_t), sizeof(dist_t)},  // C-style contiguous strides for each index
-                                data_numpy_d,                          // the data pointer
-                                free_when_done_d));
+    std::vector<hnswlib::labeltype> mod_get_neighbors(hnswlib::labeltype element_index, int level_id) {
+        std::vector<hnswlib::labeltype> neighbors{};
+        appr_alg->getNeighborsInLevel(level_id, element_index, neighbors);
+        return neighbors;
     }
 
-
-    py::object knn_approach2(py::object input, size_t k = 1, int m = 1, int num_threads = -1) {
-        if (!flag_data_loaded_) {
-            printf("Error: Data Pointer Not Let Loaded");
-            return py::make_tuple();
-        }
-
-        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
-        auto buffer = items.request();
-        hnswlib::labeltype* data_numpy_l;
-        dist_t* data_numpy_d;
-        size_t rows, features;
-
-        if (num_threads <= 0) num_threads = num_threads_default;
-        {
-            py::gil_scoped_release l;
-            get_input_array_shapes(buffer, &rows, &features);
-
-            // avoid using threads when the number of searches is small:
-            if (rows <= num_threads * 4) {
-                num_threads = 1;
-            }
-
-            data_numpy_l = new hnswlib::labeltype[rows * k];
-            data_numpy_d = new dist_t[rows * k];
-
-            if (normalize == false) {
-                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->knn_approach2((void*)items.data(row), k, m);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
-                        auto& result_tuple = result.top();
-                        data_numpy_d[row * k + i] = result_tuple.first;
-                        data_numpy_l[row * k + i] = result_tuple.second;
-                        result.pop();
-                    }
-                });
-            } else {
-                std::vector<float> norm_array(num_threads * features);
-                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
-                    float* data = (float*)items.data(row);
-
-                    size_t start_idx = threadId * dim;
-                    normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
-
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->knn_approach2((void*)(norm_array.data() + start_idx), k, m);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
-                        auto& result_tuple = result.top();
-                        data_numpy_d[row * k + i] = result_tuple.first;
-                        data_numpy_l[row * k + i] = result_tuple.second;
-                        result.pop();
-                    }
-                });
-            }
-        }
-        py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
-        py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
-
-        return py::make_tuple(
-            py::array_t<hnswlib::labeltype>({rows, k},  // shape
-                                            {k * sizeof(hnswlib::labeltype),
-                                             sizeof(hnswlib::labeltype)},  // C-style contiguous strides for each index
-                                            data_numpy_l,                  // the data pointer
-                                            free_when_done_l),
-            py::array_t<dist_t>({rows, k},                             // shape
-                                {k * sizeof(dist_t), sizeof(dist_t)},  // C-style contiguous strides for each index
-                                data_numpy_d,                          // the data pointer
-                                free_when_done_d));
+    void mod_set_neighbors(hnswlib::labeltype element_index, int level_id, std::vector<hnswlib::labeltype> neighbors) {
+        appr_alg->setNeighborsInLevel(level_id, element_index, neighbors);
+        return;
     }
 
-    py::object knn_approach3(py::object input, size_t k = 1, int m = 1, int num_threads = -1) {
-        if (!flag_data_loaded_) {
-            printf("Error: Data Pointer Not Let Loaded");
-            return py::make_tuple();
+    std::vector<float> mod_getVector(hnswlib::labeltype element_index) {
+        std::vector<float> vec{};
+
+        float *test_data = reinterpret_cast<float*> (appr_alg->getDataByInternalId((hnswlib::tableint) element_index));
+        for (int i = 0; i < 768; i++) {
+            vec.push_back(test_data[i]);
         }
-
-        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
-        auto buffer = items.request();
-        hnswlib::labeltype* data_numpy_l;
-        dist_t* data_numpy_d;
-        size_t rows, features;
-
-        // appr_alg->averageEntryPointDistance_ = 0;
-        if (num_threads <= 0) num_threads = num_threads_default;
-        {
-            py::gil_scoped_release l;
-            get_input_array_shapes(buffer, &rows, &features);
-
-            // avoid using threads when the number of searches is small:
-            if (rows <= num_threads * 4) {
-                num_threads = 1;
-            }
-
-            data_numpy_l = new hnswlib::labeltype[rows * k];
-            data_numpy_d = new dist_t[rows * k];
-
-            if (normalize == false) {
-                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->knn_approach3((void*)items.data(row), k, m);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
-                        auto& result_tuple = result.top();
-                        data_numpy_d[row * k + i] = result_tuple.first;
-                        data_numpy_l[row * k + i] = result_tuple.second;
-                        result.pop();
-                    }
-                });
-            } else {
-                std::vector<float> norm_array(num_threads * features);
-                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
-                    float* data = (float*)items.data(row);
-
-                    size_t start_idx = threadId * dim;
-                    normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
-
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->knn_approach3((void*)(norm_array.data() + start_idx), k, m);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
-                        auto& result_tuple = result.top();
-                        data_numpy_d[row * k + i] = result_tuple.first;
-                        data_numpy_l[row * k + i] = result_tuple.second;
-                        result.pop();
-                    }
-                });
-            }
-        }
-        py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
-        py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
-
-        return py::make_tuple(
-            py::array_t<hnswlib::labeltype>({rows, k},  // shape
-                                            {k * sizeof(hnswlib::labeltype),
-                                             sizeof(hnswlib::labeltype)},  // C-style contiguous strides for each index
-                                            data_numpy_l,                  // the data pointer
-                                            free_when_done_l),
-            py::array_t<dist_t>({rows, k},                             // shape
-                                {k * sizeof(dist_t), sizeof(dist_t)},  // C-style contiguous strides for each index
-                                data_numpy_d,                          // the data pointer
-                                free_when_done_d));
-    }
-
-
-
-
-    py::object knn_approach4(py::object input, size_t k = 1, int m = 1, int num_threads = -1) {
-        if (!flag_data_loaded_) {
-            printf("Error: Data Pointer Not Let Loaded");
-            return py::make_tuple();
-        }
-
-        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
-        auto buffer = items.request();
-        hnswlib::labeltype* data_numpy_l;
-        dist_t* data_numpy_d;
-        size_t rows, features;
-
-        // appr_alg->averageEntryPointDistance_ = 0;
-        if (num_threads <= 0) num_threads = num_threads_default;
-        {
-            py::gil_scoped_release l;
-            get_input_array_shapes(buffer, &rows, &features);
-
-            // avoid using threads when the number of searches is small:
-            if (rows <= num_threads * 4) {
-                num_threads = 1;
-            }
-
-            data_numpy_l = new hnswlib::labeltype[rows * k];
-            data_numpy_d = new dist_t[rows * k];
-
-            if (normalize == false) {
-                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->knn_approach4((void*)items.data(row), k, m);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
-                        auto& result_tuple = result.top();
-                        data_numpy_d[row * k + i] = result_tuple.first;
-                        data_numpy_l[row * k + i] = result_tuple.second;
-                        result.pop();
-                    }
-                });
-            } else {
-                std::vector<float> norm_array(num_threads * features);
-                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
-                    float* data = (float*)items.data(row);
-
-                    size_t start_idx = threadId * dim;
-                    normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
-
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result =
-                        appr_alg->knn_approach4((void*)(norm_array.data() + start_idx), k, m);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
-                        auto& result_tuple = result.top();
-                        data_numpy_d[row * k + i] = result_tuple.first;
-                        data_numpy_l[row * k + i] = result_tuple.second;
-                        result.pop();
-                    }
-                });
-            }
-        }
-        py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
-        py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
-
-        return py::make_tuple(
-            py::array_t<hnswlib::labeltype>({rows, k},  // shape
-                                            {k * sizeof(hnswlib::labeltype),
-                                             sizeof(hnswlib::labeltype)},  // C-style contiguous strides for each index
-                                            data_numpy_l,                  // the data pointer
-                                            free_when_done_l),
-            py::array_t<dist_t>({rows, k},                             // shape
-                                {k * sizeof(dist_t), sizeof(dist_t)},  // C-style contiguous strides for each index
-                                data_numpy_d,                          // the data pointer
-                                free_when_done_d));
+        return vec;
     }
 };
-
-/*
-====================================================================================================================
-|
-|
-|
-                    BRUTE FORCE BINDINGS CLASS
-|
-|
-|
-====================================================================================================================
-*/
 
 template <typename dist_t, typename data_t = float>
 class BFIndex {
@@ -1056,7 +706,7 @@ class BFIndex {
             space = new hnswlib::InnerProductSpace(dim);
         } else if (space_name == "cosine") {
             space = new hnswlib::InnerProductSpace(dim);
-            // normalize = true; EDIT: NORMALIZED AHEAD OF TIME
+            normalize = true;
         } else {
             throw std::runtime_error("Space name must be one of l2, ip, or cosine.");
         }
@@ -1085,13 +735,13 @@ class BFIndex {
         for (int i = 0; i < dim; i++) norm_array[i] = data[i] * norm;
     }
 
-    void addItems(py::object input, py::object ids_ = py::none()) {
+    void addItems(py::object& input, py::object ids_ = py::none()) {
         py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
         auto buffer = items.request();
         size_t rows, features;
         get_input_array_shapes(buffer, &rows, &features);
 
-        if (features != (size_t)dim) throw std::runtime_error("Wrong dimensionality of the vectors");
+        if (features != dim) throw std::runtime_error("Wrong dimensionality of the vectors");
 
         std::vector<size_t> ids = get_input_ids_and_check_shapes(ids_, rows);
 
@@ -1171,23 +821,10 @@ class BFIndex {
     }
 };
 
-/*
-====================================================================================================================
-|
-|
-|
-                    ACTUAL PYTHON BINDING PLUGIN FOR PYBIND
-|
-|
-|
-====================================================================================================================
-*/
+PYBIND11_PLUGIN(hnswlib_modified) {
+    py::module m("hnswlib_modified");
 
-PYBIND11_PLUGIN(hnswlib) {
-    py::module m("hnswlib");
-
-    // The HNSW Bindings
-    py::class_<Index<float>>(m, "Index")
+    py::class_<Index<float>>(m, "Index", py::module_local())
         .def(py::init(&Index<float>::createFromParams), py::arg("params"))
         /* WARNING: Index::createFromIndex is not thread-safe with Index::addItems */
         .def(py::init(&Index<float>::createFromIndex), py::arg("index"))
@@ -1205,7 +842,16 @@ PYBIND11_PLUGIN(hnswlib) {
         .def("save_index", &Index<float>::saveIndex, py::arg("path_to_index"))
         .def("load_index", &Index<float>::loadIndex, py::arg("path_to_index"), py::arg("max_elements") = 0,
              py::arg("allow_replace_deleted") = false)
-        .def("load_dataset", &Index<float>::loadDataset, py::arg("data"))
+        // mods
+        .def("preset_index", &Index<float>::mod_preset_index, py::arg("element_levels"))
+        .def("get_entrypoint", &Index<float>::mod_get_entrypoint)
+        .def("get_neighbors", &Index<float>::mod_get_neighbors, py::arg("element_index"), py::arg("level"))
+        .def("set_neighbors", &Index<float>::mod_set_neighbors, py::arg("element_index"), py::arg("level"),
+             py::arg("neighbors"))
+        .def("getIndexParams", &Index<float>::getIndexParams)
+        .def("getVector", &Index<float>::mod_getVector, py::arg("element_index"))
+        // back
+        .def("load_data", &Index<float>::loadData, py::arg("data")) /* NEW: FOR LOADING DATA ON LOAD INDEX */
         .def("mark_deleted", &Index<float>::markDeleted, py::arg("label"))
         .def("unmark_deleted", &Index<float>::unmarkDeleted, py::arg("label"))
         .def("resize_index", &Index<float>::resizeIndex, py::arg("new_size"))
@@ -1230,8 +876,11 @@ PYBIND11_PLUGIN(hnswlib) {
         .def_property_readonly(
             "ef_construction",
             [](const Index<float>& index) { return index.index_inited ? index.appr_alg->ef_construction_ : 0; })
+        .def_property_readonly(
+            "maxlevel", [](const Index<float>& index) { return index.index_inited ? index.appr_alg->maxlevel_ : 0; })
         .def_property_readonly("M",
                                [](const Index<float>& index) { return index.index_inited ? index.appr_alg->M_ : 0; })
+
         .def(py::pickle(
             [](const Index<float>& ind) {                    // __getstate__
                 return py::make_tuple(ind.getIndexParams()); /* Return dict (wrapped in a tuple) that fully encodes
@@ -1241,22 +890,12 @@ PYBIND11_PLUGIN(hnswlib) {
                 if (t.size() != 1) throw std::runtime_error("Invalid state!");
                 return Index<float>::createFromParams(t[0].cast<py::dict>());
             }))
-        .def("__repr__",
-             [](const Index<float>& a) {
-                 return "<hnswlib.Index(space='" + a.space_name + "', dim=" + std::to_string(a.dim) + ")>";
-             })
-        .def("print_hierarchy", &Index<float>::print_hierarchy)
-        .def("monotonic_hierarchy", &Index<float>::monotonic_hierarchy)
-        .def("knn_hnsw", &Index<float>::knnQuery_hnsw, py::arg("data"), py::arg("k") = 1, py::arg("num_threads") = -1)
-        .def("knn_approach2", &Index<float>::knn_approach2, py::arg("data"), py::arg("k") = 1, py::arg("m") = 1,
-             py::arg("num_threads") = -1)
-        .def("knn_approach3", &Index<float>::knn_approach3, py::arg("data"), py::arg("k") = 1, py::arg("m") = 1,
-             py::arg("num_threads") = -1)
-        .def("knn_approach4", &Index<float>::knn_approach4, py::arg("data"), py::arg("k") = 1, py::arg("m") = 1,
-             py::arg("num_threads") = -1);
 
-    // The Brute Force Bindings
-    py::class_<BFIndex<float>>(m, "BFIndex")
+        .def("__repr__", [](const Index<float>& a) {
+            return "<hnswlib.Index(space='" + a.space_name + "', dim=" + std::to_string(a.dim) + ")>";
+        });
+
+    py::class_<BFIndex<float>>(m, "BFIndex", py::module_local())
         .def(py::init<const std::string&, const int>(), py::arg("space"), py::arg("dim"))
         .def("init_index", &BFIndex<float>::init_new_index, py::arg("max_elements"))
         .def("knn_query", &BFIndex<float>::knnQuery_return_numpy, py::arg("data"), py::arg("k") = 1,
@@ -1268,25 +907,5 @@ PYBIND11_PLUGIN(hnswlib) {
         .def("__repr__", [](const BFIndex<float>& a) {
             return "<hnswlib.BFIndex(space='" + a.space_name + "', dim=" + std::to_string(a.dim) + ")>";
         });
-
     return m.ptr();
 }
-
-
-// dfd
-// d
-// ddf
-// d,,
-
-// s
-// s
-
-// s
-// ss
-
-// d sto
-// key_tomjiooo
-// d,
-// d
-// d
-// d

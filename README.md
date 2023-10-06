@@ -1,33 +1,19 @@
-# SISAP 2023 Indexing Challenge
-**Team Name:** HSP
+# Computational Enhancements of HNSW Targeted to Very Large Datasets
+This submission to the SISAP 2023 Indexing Challenge leverages the [*hnswlib*](https://github.com/nmslib/hnswlib.git) 
+implementation of the Hierarchical Navigable Small World (HNSW) index. 
 
-#### Description
-A hierarchical, graph-based approximate search method. The key idea is to select pivots that are properly distributed 
-over the dataset, ensuring quality starting points over the bottom-layer graph. The pivots on the upper layers are 
-connected by an approximately monotonic graph, the approximate HSP Graph, which help improve fast graph traversal to 
-starting points. Multiple search methods are tested, utilizing these well distributed pivots for diverse yet optimal 
-starting points. 
+> Malkov, Yu A., and Dmitry A. Yashunin. "Efficient and robust approximate nearest neighbor search using hierarchical 
+> navigable small world graphs." IEEE transactions on pattern analysis and machine intelligence 42, no. 4 (2018): 
+> 824-836.
 
-This code heavily relies on the highly-optimized implementation of the Hierarchical Navigable Small World (HNSW) by
-[yurymalkov](https://github.com/nmslib/hnswlib). 
+To support a continuous (non-batched) construction for large datasets, this submission features a modification to the 
+memory structure of the index. Unnecessary functionality is removed to optimize search-time efficiency. 
 
-~~~
-    @article{malkov2018efficient,
-    title={Efficient and robust approximate nearest neighbor search using hierarchical navigable small world graphs},
-    author={Malkov, Yu A and Yashunin, Dmitry A},
-    journal={IEEE transactions on pattern analysis and machine intelligence},
-    volume={42},
-    number={4},
-    pages={824--836},
-    year={2018},
-    publisher={IEEE}
-    }
-~~~
+## Setup
+The *hnswlib* library is written in C++ and uses PyBind11 for Python bindings. This code was tested using Python 3.8 
+and Anaconda. See the [Github Workflow](https://github.com/cole-foster/sisap-2023/blob/main/.github/workflows/ci.yml)
+for an example installation of this setup.
 
-#### Environment Setup
-- Python/3.8
-- 
-
-
+Index construction and evaluation is shown in `search/search.py`.
 
 

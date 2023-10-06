@@ -1,6 +1,6 @@
 hnswlib.egg-info/
+hnswlib_modified.egg-info/
 build/
-build1/
 dist/
 tmp/
 python_bindings/tests/__pycache__/
@@ -11,3 +11,4 @@ var/
 .vscode/
 .vs/
 **.DS_Store
+

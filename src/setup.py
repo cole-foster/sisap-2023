@@ -8,18 +8,7 @@ import setuptools
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
-
-'''
-========================================
-    Modified by Cole Foster
-    2023-07-11
-
-    Changed Bindings to Produce Modified HNSW Package
-
-========================================
-'''
-
-__version__ = '0.0.0' ### MODIFIED: 
+__version__ = '0.7.0'
 
 
 include_dirs = [
@@ -40,10 +29,10 @@ else:
 libraries = []
 extra_objects = []
 
-### MODIFIED: 
+
 ext_modules = [
     Extension(
-        'hnswlib',
+        'hnswlib_modified',
         source_files,
         include_dirs=include_dirs,
         libraries=libraries,
@@ -124,13 +113,11 @@ class BuildExt(build_ext):
         build_ext.build_extensions(self)
 
 
-
-# MODIFIED
 setup(
-    name='hnswlib',
+    name='hnswlib_modified',
     version=__version__,
-    description='For SISAP2023: hnswlib modified',
-    author='Edited By: Cole Foster ||| Orignal: Yury Malkov and others',
+    description='hnswlib',
+    author='Yury Malkov and others',
     url='https://github.com/yurymalkov/hnsw',
     long_description="""hnsw""",
     ext_modules=ext_modules,

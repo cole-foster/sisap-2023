@@ -1,8 +1,2 @@
-src_old/
 data/
-index/
 result/
-res*
-slurms/
-.vscode/
-*.sh
